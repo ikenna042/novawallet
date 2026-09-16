@@ -50,7 +50,7 @@ curl -s -X POST localhost:8080/api/v1/auth/login -H 'Content-Type: application/j
 
 ```bash
 login() { curl -s -X POST localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' \
-            -d "{\"email\":\"$1\",\"password\":\"$2\"}" | jq -r .data.accessToken; }
+            -d "{\"email\":\"$1\",\"password\":\"$2\"}" | jq -r .accessToken; }
 for u in alice bob; do
   curl -s -X POST localhost:8080/api/v1/auth/register -H 'Content-Type: application/json' \
     -d "{\"email\":\"$u@example.com\",\"password\":\"Demo-Passw0rd\"}" > /dev/null
@@ -59,8 +59,8 @@ T_ALICE=$(login alice@example.com Demo-Passw0rd)
 T_BOB=$(login bob@example.com Demo-Passw0rd)
 T_ADMIN=$(login admin@novawallet.local 'ChangeMe-Admin-2026!')
 
-A=$(curl -s -X POST localhost:8080/api/v1/wallets -H "Authorization: Bearer $T_ALICE" | jq -r .data.walletId)
-B=$(curl -s -X POST localhost:8080/api/v1/wallets -H "Authorization: Bearer $T_BOB" | jq -r .data.walletId)
+A=$(curl -s -X POST localhost:8080/api/v1/wallets -H "Authorization: Bearer $T_ALICE" | jq -r .walletId)
+B=$(curl -s -X POST localhost:8080/api/v1/wallets -H "Authorization: Bearer $T_BOB" | jq -r .walletId)
 
 # Inbound NIP credit of ₦10,000 (admin only; idempotent on the NIP session reference)
 curl -s -X POST localhost:8080/api/v1/wallets/$A/credit -H "Authorization: Bearer $T_ADMIN" \
@@ -72,7 +72,7 @@ curl -si -X POST localhost:8080/api/v1/transfers -H "Authorization: Bearer $T_AL
   -d "{\"sourceWalletId\":\"$A\",\"destinationWalletId\":\"$B\",\"amountKobo\":250000}"
 
 curl -s localhost:8080/api/v1/wallets/$A/statement -H "Authorization: Bearer $T_ALICE" | jq
-curl -s localhost:8080/api/v1/wallets/$A/audit -H "Authorization: Bearer $T_ADMIN" | jq '.data.chainIntact'
+curl -s localhost:8080/api/v1/wallets/$A/audit -H "Authorization: Bearer $T_ADMIN" | jq '.chainIntact'
 ```
 </details>
 
@@ -92,7 +92,7 @@ dotnet test
 | Suite | Count | What it covers |
 |---|---|---|
 | `NovaWallet.UnitTests` | 74 | `Money` arithmetic and overflow, WAT day boundaries, daily-limit edge cases, audit hash chain, request validation, transfer orchestration against an in-memory store (lock order, replay, rejection caching), password and email rules, lockout, token rotation and reuse detection, wallet freeze, admin rules |
-| `NovaWallet.IntegrationTests` | 76 | The full HTTP pipeline against **real PostgreSQL**: concurrency under load, idempotency, sign-up / sign-in / refresh / logout (including concurrent refresh), instant revocation on disable and role change, admin user management, wallet freeze, admin action log, validation, the response envelope on every success and error path, Problem Details, pagination, append-only triggers, CHECK constraints, outbox, rate limiting, health, OpenAPI |
+| `NovaWallet.IntegrationTests` | 74 | The full HTTP pipeline against **real PostgreSQL**: concurrency under load, idempotency, sign-up / sign-in / refresh / logout (including concurrent refresh), instant revocation on disable and role change, admin user management, wallet freeze, admin action log, validation, Problem Details, pagination, append-only triggers, CHECK constraints, outbox, rate limiting, health, OpenAPI |
 
 Integration tests start PostgreSQL with **Testcontainers**, so Docker is required; CI runs them this way.
 Without Docker, point them at any server and they create and drop a throwaway database:
@@ -173,29 +173,10 @@ Admins can't disable or demote themselves, and the last active admin can't be re
 |---|---|---|
 | GET | `/health/live`, `/health/ready` | Readiness checks the database |
 
-### Response format
-
-Every response body starts with the same three properties: `statusCode` (mirrors the HTTP status), a human-readable `message`, and `data`.
+Every error is an RFC 7807 `application/problem+json` body. Clients should branch on the stable `code` field, not on the message:
 
 ```json
-HTTP/1.1 201 Created
 {
-  "statusCode": 201,
-  "message": "Transfer completed",
-  "data": { "transactionId": "…", "type": "Transfer", "amountKobo": 250000, "balanceAfterKobo": 750000, "…": "…" }
-}
-```
-
-A replayed idempotent request returns the original `data` with the message `"Already processed: returning the original result."` (and the `Idempotent-Replayed: true` header).
-
-Errors keep the same three properties, with `data: null`, and then the **RFC 7807 Problem Details** members the brief recommends. They are served as `application/problem+json`, so standard Problem Details clients still work. Clients should branch on the stable `code` field, not on the message:
-
-```json
-HTTP/1.1 422 Unprocessable Entity
-{
-  "statusCode": 422,
-  "message": "The source wallet does not have enough funds for this transfer.",
-  "data": null,
   "type": "https://novawallet.example/problems/insufficient_funds",
   "title": "Insufficient funds",
   "status": 422,
@@ -206,8 +187,6 @@ HTTP/1.1 422 Unprocessable Entity
   "correlationId": "4fb16c3d438d0ac2214f08758698a8f6"
 }
 ```
-
-Validation errors add an `errors` object (field → messages). Every error path uses this shape: domain rules, model validation, 401/403 from authentication, unknown routes, 405, 429 from the rate limiter, and unexpected 500s.
 
 | Status | `code` |
 |---|---|
@@ -302,7 +281,6 @@ Everything below happens in **one** database transaction at READ COMMITTED:
 | **Short access tokens (15 min) + rotating refresh tokens with reuse detection** | A leaked access token is useful only briefly; a stolen refresh token is detected the moment either party uses an old copy. | Two tabs refreshing the same token at the same instant are treated as reuse and signed out (security over convenience). |
 | **Per-request user lookup** (status, role, `token_version`) | Disabling a user or changing their role takes effect immediately, not when the token expires. | One primary-key read per request; a short cache would trade a few seconds of staleness for fewer reads. |
 | **Identical 401 for every sign-in failure**, dummy hash for unknown emails, lockout after 5 failures, per-IP rate limit | Doesn't reveal which emails exist; slows password guessing. | Lockout can be abused to lock someone out for 15 minutes; a production system would add CAPTCHA / risk scoring. Registration does reveal an existing email (409), a usability trade-off noted here. |
-| **Response envelope `{ statusCode, message, data }`, with errors also RFC 7807** | One predictable shape for every client, while keeping the Problem Details format the brief recommends (errors are an envelope *and* a valid `application/problem+json` document). | `statusCode` duplicates the HTTP status (and `status` on errors); some API designers prefer bare resources. Wrapping happens in one MVC result filter and one Problem Details writer, so controllers and services stay unaware of it. |
 | **Freeze = debit hold** | Matches how banks place fraud / dispute holds: money can still arrive. | A full freeze (no credits) would be a second status if compliance required it. |
 
 ## 6. Security and Nigerian operating context
@@ -362,7 +340,7 @@ src/
   NovaWallet.Api/             Controllers (wallets, transfers, auth, admin), JWT issuing/validation, Problem Details, rate limiting, correlation id
 tests/
   NovaWallet.UnitTests/         74 tests
-  NovaWallet.IntegrationTests/  76 tests (PostgreSQL via Testcontainers or NOVAWALLET_TEST_DB)
+  NovaWallet.IntegrationTests/  74 tests (PostgreSQL via Testcontainers or NOVAWALLET_TEST_DB)
 scripts/smoke-test.sh         end-to-end check used by CI against `docker compose up`
 .github/workflows/ci.yml      build + all tests; compose smoke test
 docs/                         testing guide, presentation deck

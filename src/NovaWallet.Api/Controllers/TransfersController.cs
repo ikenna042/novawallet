@@ -9,7 +9,7 @@ namespace NovaWallet.Api.Controllers;
 
 [ApiController]
 [Route("api/v1/transfers")]
-[ProducesResponseType<ApiError>(StatusCodes.Status401Unauthorized)]
+[ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
 public sealed class TransfersController(TransferService transfers) : ControllerBase
 {
     public const string IdempotencyKeyHeader = "Idempotency-Key";
@@ -27,13 +27,12 @@ public sealed class TransfersController(TransferService transfers) : ControllerB
     /// is rejected with 422.
     /// </summary>
     [HttpPost]
-    [ApiMessage("Transfer completed")]
     [EnableRateLimiting(RateLimitingSetup.TransfersPolicy)]
-    [ProducesResponseType<ApiResponse<TransactionReceipt>>(StatusCodes.Status201Created)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status404NotFound)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status422UnprocessableEntity)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType<TransactionReceipt>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Create(
         [FromHeader(Name = IdempotencyKeyHeader)] string? idempotencyKey,
         [FromBody] TransferRequest request,

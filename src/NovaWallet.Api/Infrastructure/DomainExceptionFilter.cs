@@ -27,10 +27,10 @@ public sealed class DomainExceptionFilter(IOptions<ProblemDetailsOptions> option
         });
 
         logger.LogInformation("Request rejected with {StatusCode} {ErrorCode}", status, code);
-        context.Result = new ObjectResult(ApiEnvelope.FromProblem(problem))
+        context.Result = new ObjectResult(problem)
         {
             StatusCode = status,
-            ContentTypes = { ApiEnvelope.ProblemContentType },
+            ContentTypes = { "application/problem+json" },
         };
         context.ExceptionHandled = true;
     }

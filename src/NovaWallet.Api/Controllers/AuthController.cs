@@ -26,13 +26,12 @@ public sealed class AuthController(AuthService auth) : ControllerBase
     /// Administrators can't be created here; they are seeded or promoted by another admin.
     /// </summary>
     [HttpPost("register")]
-    [ApiMessage("Account created")]
     [AllowAnonymous]
     [EnableRateLimiting(RateLimitingSetup.AuthPolicy)]
-    [ProducesResponseType<ApiResponse<UserProfile>>(StatusCodes.Status201Created)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status409Conflict)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType<UserProfile>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request, CancellationToken ct)
     {
         var profile = await auth.RegisterAsync(new RegisterCommand(request.Email, request.Password, request.FullName), ct);
@@ -45,12 +44,11 @@ public sealed class AuthController(AuthService auth) : ControllerBase
     /// Five wrong passwords lock the account for 15 minutes.
     /// </summary>
     [HttpPost("login")]
-    [ApiMessage("Signed in")]
     [AllowAnonymous]
     [EnableRateLimiting(RateLimitingSetup.AuthPolicy)]
-    [ProducesResponseType<ApiResponse<AuthTokens>>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType<AuthTokens>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
     public Task<AuthTokens> Login([FromBody] LoginRequest request, CancellationToken ct) =>
         auth.LoginAsync(new LoginCommand(request.Email, request.Password), ct);
 
@@ -59,28 +57,25 @@ public sealed class AuthController(AuthService auth) : ControllerBase
     /// signs the whole session out (it indicates the token was stolen).
     /// </summary>
     [HttpPost("refresh")]
-    [ApiMessage("Session refreshed")]
     [AllowAnonymous]
     [EnableRateLimiting(RateLimitingSetup.AuthPolicy)]
-    [ProducesResponseType<ApiResponse<AuthTokens>>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<AuthTokens>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
     public Task<AuthTokens> Refresh([FromBody] RefreshRequest request, CancellationToken ct) =>
         auth.RefreshAsync(request.RefreshToken, ct);
 
     /// <summary>Sign out: revokes the session that the refresh token belongs to.</summary>
     [HttpPost("logout")]
-    [ApiMessage("Signed out")]
-    [ProducesResponseType<ApiResponse<object>>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> Logout([FromBody] RefreshRequest request, CancellationToken ct)
     {
         await auth.LogoutAsync(User.ToActor(), request.RefreshToken, ct);
-        return new ObjectResult(null) { StatusCode = StatusCodes.Status200OK };
+        return NoContent();
     }
 
     /// <summary>The signed-in user's profile, role and wallet id.</summary>
     [HttpGet("me")]
-    [ApiMessage("Profile retrieved")]
-    [ProducesResponseType<ApiResponse<UserProfile>>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<UserProfile>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
     public Task<UserProfile> Me(CancellationToken ct) => auth.MeAsync(User.ToActor(), ct);
 }

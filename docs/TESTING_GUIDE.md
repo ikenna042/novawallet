@@ -4,9 +4,9 @@ Three ways to test, from quickest to deepest:
 
 | Way | Time | Proves |
 |---|---|---|
-| **A. Smoke script** (`./scripts/smoke-test.sh`) | 5 s | The main flow works end to end, including sign-in, admin actions and the response format (32 checks) |
+| **A. Smoke script** (`./scripts/smoke-test.sh`) | 5 s | The main flow works end to end, including sign-in and admin actions (30 checks) |
 | **B. By hand**, in Swagger or with curl (sections 2–5) | 15–20 min | Each requirement, one at a time, in front of an audience |
-| **C. Automated suite** (`dotnet test`, section 6) | ~20 s | Everything (150 tests), including 200-request concurrency |
+| **C. Automated suite** (`dotnet test`, section 6) | ~20 s | Everything (148 tests), including 200-request concurrency |
 
 ---
 
@@ -54,34 +54,13 @@ login()  { curl -s -X POST $BASE/api/v1/auth/login -H 'Content-Type: application
              -d "{\"email\":\"$1\",\"password\":\"$2\"}"; }
 signup() { curl -s -X POST $BASE/api/v1/auth/register -H 'Content-Type: application/json' \
              -d "{\"email\":\"$1-$RUN@example.com\",\"password\":\"$PW\"}" > /dev/null
-           login "$1-$RUN@example.com" "$PW" | jq -r .data.accessToken; }
+           login "$1-$RUN@example.com" "$PW" | jq -r .accessToken; }
 ALICE=$(signup alice)
 BOB=$(signup bob)
-ADMIN=$(login admin@novawallet.local 'ChangeMe-Admin-2026!' | jq -r .data.accessToken)
+ADMIN=$(login admin@novawallet.local 'ChangeMe-Admin-2026!' | jq -r .accessToken)
 ```
 
 Sign-up, sign-in and refresh are rate-limited to 20 per minute per client in the compose setup. If you see `429 rate_limited`, wait a minute.
-
-### 1.2 Response format
-
-Every response body starts with the same three properties:
-
-```json
-{ "statusCode": 201, "message": "Transfer completed", "data": { "transactionId": "…", "balanceAfterKobo": 750000 } }
-```
-
-Errors use the same three (with `data: null`), followed by the RFC 7807 Problem Details fields the brief recommends, and are sent as `application/problem+json`:
-
-```json
-{
-  "statusCode": 422, "message": "The source wallet does not have enough funds for this transfer.", "data": null,
-  "type": "https://novawallet.example/problems/insufficient_funds", "title": "Insufficient funds", "status": 422,
-  "detail": "The source wallet does not have enough funds for this transfer.", "instance": "/api/v1/transfers",
-  "code": "insufficient_funds", "traceId": "…", "correlationId": "…"
-}
-```
-
-So with `jq`, read results from `.data.<field>` and error codes from `.code`. A replayed idempotent request has the message `"Already processed: returning the original result."`.
 
 ---
 
@@ -92,7 +71,7 @@ So with `jq`, read results from `.data.<field>` and error codes from `.code`. A 
 ```bash
 curl -s -X POST $BASE/api/v1/auth/register -H 'Content-Type: application/json' \
   -d "{\"email\":\"dayo-$RUN@example.com\",\"password\":\"$PW\",\"fullName\":\"Dayo\"}" | jq
-login "dayo-$RUN@example.com" "$PW" | jq '{statusCode, message, data: (.data | {tokenType, expiresIn, role: .user.role, refreshToken: (.refreshToken[0:12] + "…")})}'
+login "dayo-$RUN@example.com" "$PW" | jq '{tokenType, expiresIn, user: .user.role, refreshToken: (.refreshToken[0:12] + "…")}'
 curl -s $BASE/api/v1/auth/me -H "Authorization: Bearer $ALICE" | jq
 ```
 
@@ -113,26 +92,26 @@ Expected:
 
 ```bash
 S1=$(login "dayo-$RUN@example.com" "$PW")
-R1=$(jq -r .data.refreshToken <<<"$S1")
+R1=$(jq -r .refreshToken <<<"$S1")
 S2=$(curl -s -X POST $BASE/api/v1/auth/refresh -H 'Content-Type: application/json' -d "{\"refreshToken\":\"$R1\"}")
-jq '{message, newAccessToken: (.data.accessToken[0:12] + "…")}' <<<"$S2"                     # 200: rotated
+jq '{newAccessToken: (.accessToken[0:12] + "…")}' <<<"$S2"                     # 200: rotated
 
 curl -s -X POST $BASE/api/v1/auth/refresh -H 'Content-Type: application/json' -d "{\"refreshToken\":\"$R1\"}" | jq .code
 # "invalid_refresh_token": R1 was already used, so this looks like theft...
-R2=$(jq -r .data.refreshToken <<<"$S2")
+R2=$(jq -r .refreshToken <<<"$S2")
 curl -s -X POST $BASE/api/v1/auth/refresh -H 'Content-Type: application/json' -d "{\"refreshToken\":\"$R2\"}" | jq .code
 # "invalid_refresh_token": ...and the whole session was revoked, including R2
 ```
 
-Logout: `POST /api/v1/auth/logout` with `{"refreshToken": "..."}` and the access token returns **200** with `"message":"Signed out"`, after which that refresh token no longer works.
+Logout: `POST /api/v1/auth/logout` with `{"refreshToken": "..."}` and the access token returns **204**, after which that refresh token no longer works.
 
 ### AD1. Admin can find anyone and see any wallet
 
 ```bash
-A=$(curl -s -X POST $BASE/api/v1/wallets -H "Authorization: Bearer $ALICE" | jq -r .data.walletId)
-B=$(curl -s -X POST $BASE/api/v1/wallets -H "Authorization: Bearer $BOB"   | jq -r .data.walletId)
+A=$(curl -s -X POST $BASE/api/v1/wallets -H "Authorization: Bearer $ALICE" | jq -r .walletId)
+B=$(curl -s -X POST $BASE/api/v1/wallets -H "Authorization: Bearer $BOB"   | jq -r .walletId)
 
-curl -s "$BASE/api/v1/admin/users?email=alice-$RUN" -H "Authorization: Bearer $ADMIN" | jq '.data.items[] | {userId, email, role, status, walletId}'
+curl -s "$BASE/api/v1/admin/users?email=alice-$RUN" -H "Authorization: Bearer $ADMIN" | jq '.items[] | {userId, email, role, status, walletId}'
 curl -s $BASE/api/v1/wallets/$A/balance -H "Authorization: Bearer $ADMIN" | jq
 curl -s -o /dev/null -w '%{http_code}\n' $BASE/api/v1/admin/users -H "Authorization: Bearer $ALICE"      # 403
 ```
@@ -140,15 +119,15 @@ curl -s -o /dev/null -w '%{http_code}\n' $BASE/api/v1/admin/users -H "Authorizat
 ### AD2. Disable a user: access stops immediately
 
 ```bash
-BOB_ID=$(curl -s $BASE/api/v1/auth/me -H "Authorization: Bearer $BOB" | jq -r .data.userId)
+BOB_ID=$(curl -s $BASE/api/v1/auth/me -H "Authorization: Bearer $BOB" | jq -r .userId)
 curl -s -X POST $BASE/api/v1/admin/users/$BOB_ID/disable -H "Authorization: Bearer $ADMIN" \
-  -H 'Content-Type: application/json' -d '{"reason":"Suspected account takeover"}' | jq '{message, status: .data.status, disabledReason: .data.disabledReason}'
+  -H 'Content-Type: application/json' -d '{"reason":"Suspected account takeover"}' | jq '{status, disabledReason}'
 
 curl -s -o /dev/null -w '%{http_code}\n' $BASE/api/v1/auth/me -H "Authorization: Bearer $BOB"   # 401, although the token hasn't expired
 login "bob-$RUN@example.com" "$PW" | jq .code                                                       # "invalid_credentials"
 
-curl -s -X POST $BASE/api/v1/admin/users/$BOB_ID/enable -H "Authorization: Bearer $ADMIN" | jq .data.status   # "Active"
-BOB=$(login "bob-$RUN@example.com" "$PW" | jq -r .data.accessToken)                                      # Bob signs in again
+curl -s -X POST $BASE/api/v1/admin/users/$BOB_ID/enable -H "Authorization: Bearer $ADMIN" | jq .status   # "Active"
+BOB=$(login "bob-$RUN@example.com" "$PW" | jq -r .accessToken)                                      # Bob signs in again
 ```
 
 How it works: every token carries a `ver` claim. Disabling a user (or changing their role) increments their `token_version`, and each request checks it against the database.
@@ -157,17 +136,17 @@ How it works: every token carries a `ver` claim. Disabling a user (or changing t
 
 ```bash
 curl -s -X POST $BASE/api/v1/admin/users/$BOB_ID/role -H "Authorization: Bearer $ADMIN" \
-  -H 'Content-Type: application/json' -d '{"role":"admin"}' | jq .data.role             # "admin"
+  -H 'Content-Type: application/json' -d '{"role":"admin"}' | jq .role              # "admin"
 curl -s -o /dev/null -w '%{http_code}\n' $BASE/api/v1/auth/me -H "Authorization: Bearer $BOB"   # 401: old token is dead
-BOB=$(login "bob-$RUN@example.com" "$PW" | jq -r .data.accessToken)
+BOB=$(login "bob-$RUN@example.com" "$PW" | jq -r .accessToken)
 curl -s -o /dev/null -w '%{http_code}\n' $BASE/api/v1/admin/users -H "Authorization: Bearer $BOB"   # 200: Bob is an admin now
 
 BOB_ADMIN=$BOB
 curl -s -X POST $BASE/api/v1/admin/users/$BOB_ID/role -H "Authorization: Bearer $BOB_ADMIN" \
   -H 'Content-Type: application/json' -d '{"role":"customer"}' | jq .code             # "admin_rule_violation": can't demote yourself
 curl -s -X POST $BASE/api/v1/admin/users/$BOB_ID/role -H "Authorization: Bearer $ADMIN" \
-  -H 'Content-Type: application/json' -d '{"role":"customer"}' | jq .data.role             # "customer"
-BOB=$(login "bob-$RUN@example.com" "$PW" | jq -r .data.accessToken)
+  -H 'Content-Type: application/json' -d '{"role":"customer"}' | jq .role              # "customer"
+BOB=$(login "bob-$RUN@example.com" "$PW" | jq -r .accessToken)
 ```
 
 The last active admin can never be removed. That case is covered by a unit test, because in the API an admin can't demote themselves.
@@ -178,7 +157,7 @@ The last active admin can never be removed. That case is covered by a unit test,
 curl -s -X POST $BASE/api/v1/wallets/$A/credit -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
   -d "{\"amountKobo\":500000,\"reference\":\"NIP${RUN}0100\"}" > /dev/null                  # Alice gets ₦5,000
 curl -s -X POST $BASE/api/v1/admin/wallets/$A/freeze -H "Authorization: Bearer $ADMIN" \
-  -H 'Content-Type: application/json' -d '{"reason":"Chargeback dispute #4471"}' | jq '{message, status: .data.status, frozenReason: .data.frozenReason}'
+  -H 'Content-Type: application/json' -d '{"reason":"Chargeback dispute #4471"}' | jq '{status, frozenReason}'
 
 send() { curl -s -o /dev/null -w "%{http_code}\n" -X POST $BASE/api/v1/transfers -H "Authorization: Bearer $1" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" \
@@ -187,14 +166,14 @@ send "$ALICE" "$A" "$B" 100     # 422: wallet_frozen
 curl -s -X POST $BASE/api/v1/wallets/$A/credit -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
   -d "{\"amountKobo\":100,\"reference\":\"NIP${RUN}0101\"}" -o /dev/null -w '%{http_code}\n'   # 201: money can still arrive
 
-curl -s -X POST $BASE/api/v1/admin/wallets/$A/unfreeze -H "Authorization: Bearer $ADMIN" | jq .data.status   # "Active"
+curl -s -X POST $BASE/api/v1/admin/wallets/$A/unfreeze -H "Authorization: Bearer $ADMIN" | jq .status   # "Active"
 send "$ALICE" "$A" "$B" 100     # 201
 ```
 
 ### AD5. Admin action log
 
 ```bash
-curl -s "$BASE/api/v1/admin/actions?limit=6" -H "Authorization: Bearer $ADMIN" | jq '.data.items[] | {action, targetType, detail, actorId}'
+curl -s "$BASE/api/v1/admin/actions?limit=6" -H "Authorization: Bearer $ADMIN" | jq '.items[] | {action, targetType, detail, actorId}'
 docker compose exec db psql -U novawallet -d novawallet -c "UPDATE admin_actions SET detail = 'nothing to see';"
 # ERROR:  admin_actions is append-only: UPDATE is not allowed
 ```
@@ -268,7 +247,7 @@ Expected: **201**. `balanceAfterKobo` is **Alice's** balance only; a sender neve
 
 ```bash
 DEMO=$(signup demo)
-D=$(curl -s -X POST $BASE/api/v1/wallets -H "Authorization: Bearer $DEMO" | jq -r .data.walletId)
+D=$(curl -s -X POST $BASE/api/v1/wallets -H "Authorization: Bearer $DEMO" | jq -r .walletId)
 curl -s -X POST $BASE/api/v1/wallets/$D/credit -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
   -d "{\"amountKobo\":100000,\"reference\":\"NIP${RUN}0002\"}" > /dev/null
 
@@ -276,7 +255,7 @@ seq 1 15 | xargs -P 15 -I{} sh -c "curl -s -o /dev/null -w '%{http_code}\n' -X P
   -H 'Authorization: Bearer $DEMO' -H 'Content-Type: application/json' -H \"Idempotency-Key: \$(uuidgen)\" \
   -d '{\"sourceWalletId\":\"$D\",\"destinationWalletId\":\"$B\",\"amountKobo\":10000}'" | sort | uniq -c
 
-curl -s $BASE/api/v1/wallets/$D/balance -H "Authorization: Bearer $DEMO" | jq .data.balanceKobo
+curl -s $BASE/api/v1/wallets/$D/balance -H "Authorization: Bearer $DEMO" | jq .balanceKobo
 ```
 
 Expected (verified):
@@ -310,7 +289,7 @@ replay() { curl -si -X POST $BASE/api/v1/transfers -H "Authorization: Bearer $AL
 replay "$BODY"                    # 201, Idempotent-Replayed: false
 replay "$BODY"                    # 201, Idempotent-Replayed: true, SAME transactionId
 replay "$OTHER"                   # 422 idempotency_key_reused
-curl -s $BASE/api/v1/wallets/$A/balance -H "Authorization: Bearer $ALICE" | jq .data.balanceKobo   # debited once
+curl -s $BASE/api/v1/wallets/$A/balance -H "Authorization: Bearer $ALICE" | jq .balanceKobo   # debited once
 ```
 
 | Also try | Expected |
@@ -338,16 +317,16 @@ Expected:
 
 ```bash
 RICH=$(signup rich)
-C=$(curl -s -X POST $BASE/api/v1/wallets -H "Authorization: Bearer $RICH" | jq -r .data.walletId)
+C=$(curl -s -X POST $BASE/api/v1/wallets -H "Authorization: Bearer $RICH" | jq -r .walletId)
 curl -s -X POST $BASE/api/v1/wallets/$C/credit -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
   -d "{\"amountKobo\":100000000,\"reference\":\"NIP${RUN}0009\"}" > /dev/null          # ₦1,000,000
 
 xfer() { curl -s -X POST $BASE/api/v1/transfers -H "Authorization: Bearer $RICH" -H 'Content-Type: application/json' \
-  -H "Idempotency-Key: $(uuidgen)" -d "{\"sourceWalletId\":\"$C\",\"destinationWalletId\":\"$B\",\"amountKobo\":$1}" | jq -c '{statusCode, message, code}'; }
+  -H "Idempotency-Key: $(uuidgen)" -d "{\"sourceWalletId\":\"$C\",\"destinationWalletId\":\"$B\",\"amountKobo\":$1}" | jq -c '{amountKobo, code, detail}'; }
 
-xfer 30000000     # ₦300,000 → 201 "Transfer completed"
-xfer 20000000     # ₦200,000 → 201 (exactly at the limit)
-xfer 1            # 1 kobo   → 422 daily_limit_exceeded, "... Remaining today: ₦0.00."
+xfer 30000000     # ₦300,000 → ok
+xfer 20000000     # ₦200,000 → ok (exactly at the limit)
+xfer 1            # 1 kobo   → 422 daily_limit_exceeded, "Remaining today: ₦0.00"
 ```
 
 This customer still has ₦500,000, so the last transfer was refused by the limit, not by the balance.
@@ -361,7 +340,7 @@ The **midnight WAT reset** can't be shown by hand without waiting until 00:00 La
 Through the API (admin only):
 
 ```bash
-curl -s $BASE/api/v1/wallets/$A/audit -H "Authorization: Bearer $ADMIN" | jq '.data | {chainIntact, records: [.records[] | {action, deltaKobo, balanceBeforeKobo, balanceAfterKobo, actor, correlationId}]}'
+curl -s $BASE/api/v1/wallets/$A/audit -H "Authorization: Bearer $ADMIN" | jq '{chainIntact, records: [.records[] | {action, deltaKobo, balanceBeforeKobo, balanceAfterKobo, actor, correlationId}]}'
 ```
 
 Expected: one record per credit or debit, and `chainIntact: true`. As a customer (`$ALICE`) the same call returns **403**. The `actor` is the id of the user who made the change.
@@ -406,7 +385,7 @@ From a desktop SQL client, connect to `localhost:5433`, database and user `novaw
 Transfers: 20 per minute per customer.
 
 ```bash
-EVE=$(signup eve); E=$(curl -s -X POST $BASE/api/v1/wallets -H "Authorization: Bearer $EVE" | jq -r .data.walletId)
+EVE=$(signup eve); E=$(curl -s -X POST $BASE/api/v1/wallets -H "Authorization: Bearer $EVE" | jq -r .walletId)
 for i in $(seq 1 25); do
   curl -s -o /dev/null -w '%{http_code} ' -X POST $BASE/api/v1/transfers -H "Authorization: Bearer $EVE" \
     -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" \
@@ -442,7 +421,7 @@ curl -s -o /dev/null -D - -X POST $BASE/api/v1/transfers -H "Authorization: Bear
   -d "{\"sourceWalletId\":\"$A\",\"destinationWalletId\":\"$B\",\"amountKobo\":100}" | grep -i correlation
 
 docker compose logs api | grep demo-ussd-session-42
-curl -s $BASE/api/v1/wallets/$A/audit -H "Authorization: Bearer $ADMIN" | jq '.data.records[-1].correlationId'
+curl -s $BASE/api/v1/wallets/$A/audit -H "Authorization: Bearer $ADMIN" | jq '.records[-1].correlationId'
 ```
 
 Expected: the same ID appears in the response header, in every JSON log line for that request, and in the audit record. Admin actions record it too (AD5). Without the header, the W3C trace id is used instead.
@@ -450,12 +429,12 @@ Expected: the same ID appears in the response header, in every JSON log line for
 ### S4. Health and readiness probes
 
 ```bash
-curl -s $BASE/health/live | jq        # message "Healthy": the process is up
-curl -s $BASE/health/ready | jq       # data: {"status":"Healthy","checks":{"database":"Healthy"}}
+curl -s $BASE/health/live            # Healthy: the process is up
+curl -s $BASE/health/ready | jq      # {"status":"Healthy","checks":{"database":"Healthy"}}
 docker compose stop db; curl -s -w ' %{http_code}\n' $BASE/health/ready; docker compose start db
 ```
 
-Expected: with the database stopped, readiness returns **503** with `"message":"Unhealthy"` while liveness stays healthy.
+Expected: with the database stopped, readiness returns **503 Unhealthy** while liveness stays healthy.
 
 ---
 
@@ -464,7 +443,7 @@ Expected: with the database stopped, readiness returns **503** with `"message":"
 You need the .NET 8 SDK. With Docker running (OrbStack), the integration tests start their own PostgreSQL:
 
 ```bash
-dotnet test                                                     # everything: 150 tests
+dotnet test                                                     # everything: 148 tests
 dotnet test tests/NovaWallet.UnitTests                          # 74 unit tests, no database needed
 dotnet test --filter "FullyQualifiedName~ConcurrencyTests" \
   --logger "console;verbosity=detailed"                         # prints the timings
@@ -490,8 +469,7 @@ If `dotnet` isn't on your PATH (it was installed user-locally), use `~/.dotnet/d
 | AU Sign-up / sign-in | `Register_login_and_me_round_trip_as_a_customer`, `Public_registration_cannot_create_an_admin`, `Duplicate_email_is_a_conflict_regardless_of_case`, `Weak_passwords_are_rejected`, `Wrong_password_and_unknown_email_are_indistinguishable`, `Account_locks_after_five_failed_logins`, unit `CredentialsTests`, `AuthServiceTests` |
 | AU Sessions | `Refresh_rotates_tokens_and_reusing_an_old_token_revokes_the_session`, **`Concurrent_refreshes_with_the_same_token_have_exactly_one_winner`**, `Logout_ends_the_session`, unit `Expired_refresh_token_is_rejected`, `Separate_logins_are_separate_sessions` |
 | AD Admin | `Customers_and_anonymous_callers_cannot_use_admin_endpoints`, `User_list_is_paginated_by_email`, `Disabling_a_user_cuts_off_access_immediately_and_enabling_restores_it`, `Promotion_invalidates_old_tokens_and_takes_effect_on_next_sign_in`, `Admin_cannot_disable_themselves`, `Admin_requests_are_validated`, `Frozen_wallet_cannot_send_but_can_receive_until_unfrozen`, `Freeze_requires_a_reason_and_an_existing_wallet`, `Admin_actions_are_logged_and_the_log_is_append_only`, `Admin_seeding_is_idempotent_across_restarts`, unit `The_last_active_admin_cannot_be_disabled_or_demoted` |
-| Response format | `Successful_responses_use_the_envelope`, `Every_kind_of_error_uses_the_envelope_and_problem_details` (400, 401, 403, two kinds of 404, 405, 422, 429). Every other test reads bodies through `ReadDataAsync` / `ReadProblemAsync`, which check the envelope too |
-| Problem Details | Every rejection test calls `ReadProblemAsync`, which asserts `application/problem+json`, `statusCode`/`message`/`data` first, matching `status`, and a `code` |
+| Problem Details | Every rejection test calls `ReadProblemAsync`, which asserts `application/problem+json` and reads `code` |
 | docker compose | GitHub Actions job **compose-smoke** |
 | S1 Rate limiting | `Transfer_endpoint_is_rate_limited_per_customer`, `Sign_in_endpoints_are_rate_limited_per_client` |
 | S2 Outbox | `Transfer_completed_event_is_published_from_the_outbox` |

@@ -10,7 +10,7 @@ namespace NovaWallet.Api.Controllers;
 
 [ApiController]
 [Route("api/v1/wallets")]
-[ProducesResponseType<ApiError>(StatusCodes.Status401Unauthorized)]
+[ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
 public sealed class WalletsController(WalletService wallets) : ControllerBase
 {
     public sealed record CreateWalletRequest([StringLength(64)] string? CustomerId);
@@ -22,10 +22,9 @@ public sealed class WalletsController(WalletService wallets) : ControllerBase
 
     /// <summary>Create a wallet (balance zero). Customers create their own; operators may pass customerId.</summary>
     [HttpPost]
-    [ApiMessage("Wallet created")]
-    [ProducesResponseType<ApiResponse<WalletResponse>>(StatusCodes.Status201Created)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status403Forbidden)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<WalletResponse>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Create(
         [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] CreateWalletRequest? request, CancellationToken ct)
     {
@@ -34,17 +33,15 @@ public sealed class WalletsController(WalletService wallets) : ControllerBase
     }
 
     [HttpGet("{walletId:guid}")]
-    [ApiMessage("Wallet retrieved")]
-    [ProducesResponseType<ApiResponse<WalletResponse>>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<WalletResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public Task<WalletResponse> Get(Guid walletId, CancellationToken ct) =>
         wallets.GetAsync(User.ToActor(), walletId, ct);
 
     /// <summary>Current balance in kobo (NGN).</summary>
     [HttpGet("{walletId:guid}/balance")]
-    [ApiMessage("Balance retrieved")]
-    [ProducesResponseType<ApiResponse<BalanceResponse>>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<BalanceResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public Task<BalanceResponse> GetBalance(Guid walletId, CancellationToken ct) =>
         wallets.GetBalanceAsync(User.ToActor(), walletId, ct);
 
@@ -53,13 +50,12 @@ public sealed class WalletsController(WalletService wallets) : ControllerBase
     /// (the NIP session id): a repeat returns the original receipt with <c>Idempotent-Replayed: true</c>.
     /// </summary>
     [HttpPost("{walletId:guid}/credit")]
-    [ApiMessage("Wallet credited")]
     [Authorize(Policy = AuthSetup.AdminPolicy)]
-    [ProducesResponseType<ApiResponse<TransactionReceipt>>(StatusCodes.Status201Created)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status403Forbidden)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status404NotFound)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<TransactionReceipt>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Credit(Guid walletId, [FromBody] CreditRequest request, CancellationToken ct)
     {
         var result = await wallets.CreditAsync(
@@ -73,21 +69,19 @@ public sealed class WalletsController(WalletService wallets) : ControllerBase
 
     /// <summary>Transaction history, newest first. Pass <c>nextCursor</c> from the previous page as <c>cursor</c>.</summary>
     [HttpGet("{walletId:guid}/statement")]
-    [ApiMessage("Statement retrieved")]
-    [ProducesResponseType<ApiResponse<StatementPage>>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<StatementPage>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public Task<StatementPage> GetStatement(
         Guid walletId, [FromQuery] int? limit, [FromQuery] string? cursor, CancellationToken ct) =>
         wallets.GetStatementAsync(User.ToActor(), walletId, limit, cursor, ct);
 
     /// <summary>The wallet's append-only audit trail, with hash-chain verification. Admin role only.</summary>
     [HttpGet("{walletId:guid}/audit")]
-    [ApiMessage("Audit trail retrieved")]
     [Authorize(Policy = AuthSetup.AdminPolicy)]
-    [ProducesResponseType<ApiResponse<AuditTrailResponse>>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status403Forbidden)]
-    [ProducesResponseType<ApiError>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<AuditTrailResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public Task<AuditTrailResponse> GetAudit(Guid walletId, CancellationToken ct) =>
         wallets.GetAuditTrailAsync(User.ToActor(), walletId, ct);
 }

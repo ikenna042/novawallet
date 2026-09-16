@@ -7,7 +7,6 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using NovaWallet.Api.Auth;
-using NovaWallet.Api.Infrastructure;
 using NovaWallet.Application;
 using NovaWallet.IntegrationTests.Infrastructure;
 using Npgsql;
@@ -45,10 +44,10 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
 
         await response.EnsureStatusAsync(HttpStatusCode.Created);
         Assert.NotNull(response.Headers.Location);
-        var wallet = (await response.ReadDataAsync<WalletResponse>());
+        var wallet = (await response.Content.ReadFromJsonAsync<WalletResponse>())!;
         Assert.Equal(client.Subject, wallet.CustomerId);
 
-        var balance = (await client.Http.GetDataAsync<BalanceResponse>($"/api/v1/wallets/{wallet.WalletId}/balance"))!;
+        var balance = (await client.Http.GetFromJsonAsync<BalanceResponse>($"/api/v1/wallets/{wallet.WalletId}/balance"))!;
         Assert.Equal(0, balance.BalanceKobo);
         Assert.Equal("NGN", balance.Currency);
         Assert.Equal("₦0.00", balance.BalanceDisplay);
@@ -74,7 +73,7 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
 
         var created = await Admin.Http.PostAsJsonAsync("/api/v1/wallets", new { customerId = other.Subject });
         await created.EnsureStatusAsync(HttpStatusCode.Created);
-        Assert.Equal(other.Subject, (await created.ReadDataAsync<WalletResponse>()).CustomerId);
+        Assert.Equal(other.Subject, (await created.Content.ReadFromJsonAsync<WalletResponse>())!.CustomerId);
 
         // Wallets can only belong to registered users.
         var unknown = await Admin.Http.PostAsJsonAsync("/api/v1/wallets", new { customerId = Guid.NewGuid().ToString("N") });
@@ -117,8 +116,8 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         await second.EnsureStatusAsync(HttpStatusCode.Created);
         Assert.Equal("true", second.Headers.GetValues("Idempotent-Replayed").Single());
         Assert.Equal(
-            (await first.ReadDataAsync<TransactionReceipt>()).TransactionId,
-            (await second.ReadDataAsync<TransactionReceipt>()).TransactionId);
+            (await first.Content.ReadFromJsonAsync<TransactionReceipt>())!.TransactionId,
+            (await second.Content.ReadFromJsonAsync<TransactionReceipt>())!.TransactionId);
         Assert.Equal(5_000_00, await client.GetBalanceAsync(wallet));
 
         var different = await Admin.CreditAsync(wallet, 1_00, reference);
@@ -138,7 +137,7 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         await response.EnsureStatusAsync(HttpStatusCode.Created);
         Assert.Equal("false", response.Headers.GetValues("Idempotent-Replayed").Single());
 
-        var receipt = (await response.ReadDataAsync<TransactionReceipt>());
+        var receipt = (await response.Content.ReadFromJsonAsync<TransactionReceipt>())!;
         Assert.Equal(7_499_50, receipt.BalanceAfterKobo);
         Assert.Equal("Transfer", receipt.Type);
         Assert.Equal(7_499_50, await alice.GetBalanceAsync(aliceWallet));
@@ -157,11 +156,7 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
 
         await replay.EnsureStatusAsync(HttpStatusCode.Created);
         Assert.Equal("true", replay.Headers.GetValues("Idempotent-Replayed").Single());
-        var original = (await first.Content.ReadFromJsonAsync<ApiResponse<TransactionReceipt>>())!;
-        var replayed = (await replay.Content.ReadFromJsonAsync<ApiResponse<TransactionReceipt>>())!;
-        Assert.Equal(original.Data, replayed.Data);
-        Assert.Equal("Transfer completed", original.Message);
-        Assert.Equal((201, ApiEnvelope.ReplayedMessage), (replayed.StatusCode, replayed.Message));
+        Assert.Equal(await first.Content.ReadAsStringAsync(), await replay.Content.ReadAsStringAsync());
         Assert.Equal(9_000_00, await alice.GetBalanceAsync(aliceWallet));
     }
 
@@ -337,7 +332,7 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         await response.EnsureStatusAsync(HttpStatusCode.Created);
         Assert.Equal("test-correlation-0001", response.Headers.GetValues("X-Correlation-ID").Single());
 
-        var trail = (await Admin.Http.GetDataAsync<AuditTrailResponse>($"/api/v1/wallets/{aliceWallet}/audit"))!;
+        var trail = (await Admin.Http.GetFromJsonAsync<AuditTrailResponse>($"/api/v1/wallets/{aliceWallet}/audit"))!;
         Assert.True(trail.ChainIntact);
         Assert.Collection(trail.Records,
             credit => Assert.Equal(("CREDIT", 0L, 1_000_00L), (credit.Action, credit.BalanceBeforeKobo, credit.BalanceAfterKobo)),
@@ -388,7 +383,7 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         var (alice, aliceWallet) = await NewCustomerAsync(1_000_00);
         var (_, bobWallet) = await NewCustomerAsync();
         var response = await alice.TransferAsync(aliceWallet, bobWallet, 1_00, Guid.NewGuid().ToString());
-        var receipt = (await response.ReadDataAsync<TransactionReceipt>());
+        var receipt = (await response.Content.ReadFromJsonAsync<TransactionReceipt>())!;
 
         await using var db = await fixture.OpenConnectionAsync();
         var deadline = DateTime.UtcNow.AddSeconds(15);
@@ -467,57 +462,6 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         // Another customer has their own budget.
         await (await bob.TransferAsync(bobWallet, aliceWallet, 1_00, Guid.NewGuid().ToString()))
             .EnsureStatusAsync(HttpStatusCode.Created);
-    }
-
-    [Fact]
-    public async Task Every_kind_of_error_uses_the_envelope_and_problem_details()
-    {
-        var (alice, aliceWallet) = await NewCustomerAsync();
-        var anonymous = fixture.Factory.CreateClient();
-        await using var limited = new LedgerApiFactory(fixture.ConnectionString, new Dictionary<string, string?>
-        {
-            ["RateLimiting:Auth:PermitLimit"] = "1",
-        });
-        var limitedClient = limited.CreateClient();
-        await limitedClient.PostAsJsonAsync("/api/v1/auth/login", new { email = "a@b.cd", password = "x" });
-
-        var cases = new (HttpResponseMessage Response, HttpStatusCode Status, string Code)[]
-        {
-            (await alice.Http.PostAsJsonAsync("/api/v1/transfers", new { amountKobo = 1 }), HttpStatusCode.BadRequest, "validation_error"),
-            (await anonymous.GetAsync($"/api/v1/wallets/{aliceWallet}/balance"), HttpStatusCode.Unauthorized, "unauthorized"),
-            (await alice.Http.GetAsync("/api/v1/admin/users"), HttpStatusCode.Forbidden, "forbidden"),
-            (await alice.Http.GetAsync($"/api/v1/wallets/{Guid.NewGuid()}/balance"), HttpStatusCode.NotFound, "wallet_not_found"),
-            (await alice.Http.GetAsync("/api/v1/no-such-endpoint"), HttpStatusCode.NotFound, "not_found"),
-            (await alice.Http.DeleteAsync($"/api/v1/wallets/{aliceWallet}"), HttpStatusCode.MethodNotAllowed, "method_not_allowed"),
-            (await alice.TransferAsync(aliceWallet, (await NewCustomerAsync()).WalletId, 1, Guid.NewGuid().ToString()),
-                HttpStatusCode.UnprocessableEntity, "insufficient_funds"),
-            (await limitedClient.PostAsJsonAsync("/api/v1/auth/login", new { email = "a@b.cd", password = "x" }),
-                HttpStatusCode.TooManyRequests, "rate_limited"),
-        };
-
-        foreach (var (response, status, code) in cases)
-        {
-            Assert.Equal(status, response.StatusCode);
-            var problem = await response.ReadProblemAsync(); // checks statusCode/message/data come first
-            Assert.Equal(code, problem.Code);
-        }
-    }
-
-    [Fact]
-    public async Task Successful_responses_use_the_envelope()
-    {
-        var customer = await LedgerClient.CustomerAsync(fixture.Factory);
-        var response = await customer.Http.PostAsJsonAsync("/api/v1/wallets", new { });
-
-        var json = await response.Content.ReadAsStringAsync();
-        using var doc = System.Text.Json.JsonDocument.Parse(json);
-        Assert.Equal(new[] { "statusCode", "message", "data" }, doc.RootElement.EnumerateObject().Select(p => p.Name));
-        Assert.Equal(201, doc.RootElement.GetProperty("statusCode").GetInt32());
-        Assert.Equal("Wallet created", doc.RootElement.GetProperty("message").GetString());
-        Assert.Equal(0, doc.RootElement.GetProperty("data").GetProperty("balanceKobo").GetInt64());
-
-        var health = await fixture.Factory.CreateClient().GetAsync("/health/ready");
-        Assert.Equal("Healthy", (await health.Content.ReadFromJsonAsync<ApiResponse<object>>())!.Message);
     }
 
     [Theory]

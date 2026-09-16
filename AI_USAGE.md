@@ -7,7 +7,7 @@ This task was built with an AI coding agent working under my direction. This fil
 | Tool | Used for |
 |---|---|
 | **Claude Code** (desktop app, Claude Opus 5 model) | Reading the brief, proposing the plan, scaffolding the solution, writing code, tests, Dockerfile, CI, README and the presentation deck. It also ran the builds, the tests and a local PostgreSQL. |
-| .NET 8 SDK, xUnit, Testcontainers | Checking every change the AI made: build with warnings-as-errors, 74 unit tests, 76 integration tests against real PostgreSQL 16. |
+| .NET 8 SDK, xUnit, Testcontainers | Checking every change the AI made: build with warnings-as-errors, 74 unit tests, 74 integration tests against real PostgreSQL 16. |
 | OrbStack (Docker) | Running `docker compose up` locally and the smoke script against it. |
 
 My role was to set scope and constraints, make the judgement calls, and require evidence (tests and deliberately broken code) before accepting a claim.
@@ -29,7 +29,7 @@ My role was to set scope and constraints, make the judgement calls, and require 
 
 3. **Choosing the local database:** I answered the agent's question with **"npm embedded-postgres"**.
    - **What came back:** it downloaded the package into a scratch folder and initialised a TCP-only PostgreSQL 16.14 server (its first attempt failed because the macOS socket path was too long). It then ran all 46 integration tests against that server.
-   - **Unprompted extra step:** after the suite went green, the agent deleted `FOR UPDATE`, re-ran the concurrency tests and restored it, then did the same with the lock ordering. This showed the tests fail for the right reason. I kept the results as evidence (section 8 below and the README).
+   - **Unprompted extra step:** after the suite went green, the agent deleted `FOR UPDATE`, re-ran the concurrency tests and restored it, then did the same with the lock ordering. This showed the tests fail for the right reason. I kept the results as evidence (section 7 below and the README).
 
 4. **"I want guide on how to test the api and how it covers the requirements"**
    - **What came back:** `docs/TESTING_GUIDE.md`, with every command executed against the running stack before it was written down. That run exposed the leak described in case 4 below.
@@ -37,11 +37,7 @@ My role was to set scope and constraints, make the judgement calls, and require 
 5. **"Why do I have to use /dev/token to create token… I want to have real users authentication flow including admin flow"**
    - **What came back:** first an explanation (the brief allows a mock issuer, and the mock tokens were already real, fully validated JWTs), then a design with choices for me to make.
    - **My decisions:** auth built into the service rather than a Keycloak container (to keep my 8 GB laptop light); the first admin seeded from environment variables; `/dev/token` removed; admins can credit wallets, read audit trails, manage users, view any wallet and freeze wallets.
-   - The agent then built register / login / refresh / logout and the admin endpoints, growing the suite from 91 to 148 tests, and repeated the "break it on purpose" check on the new security code (section 8).
-
-6. **"I want all the responses to be structured better with 3 properties statusCode, message, data"**
-   - **What came back:** a question first, because the brief recommends RFC 7807 for errors. My answer: stay consistent with the brief; the envelope is a personal preference.
-   - **Result:** successes are `{ statusCode, message, data }`; errors start with the same three properties and keep all the RFC 7807 members (still `application/problem+json`). Case 6 below was caught while doing this.
+   - The agent then built register / login / refresh / logout and the admin endpoints, growing the suite from 91 to 148 tests, and repeated the "break it on purpose" check on the new security code (section 7).
 
 ## Where the AI was wrong or naive, and how it was caught
 
@@ -83,14 +79,7 @@ Worse, the expansion also split the arguments of the `expect` helper. It ended u
 - **Fix:** every JSON body in the script is now built with `jq`.
 - **Re-check:** all 30 checks pass on both an upgraded database and a fresh `docker compose down -v && up`.
 
-### 6. The new error format silently didn't apply to 401s and 429s (caught by two failing tests, then pinned by a new one)
-The AI registered its envelope-writing Problem Details writer "before `AddProblemDetails`", assuming that made it the first choice. But `AddControllers()` had already registered MVC's own writer, which claims every controller endpoint. So 401 (no token) and 429 (rate limited) responses still came out in the old shape. The existing tests didn't notice: they only checked the content type, which was unchanged.
-
-- **How it was caught:** two rate-limit tests that check the new field order failed, and a quick `curl` confirmed the 401 body had no `statusCode`.
-- **Fix:** the writer is inserted at position 0 of the service collection.
-- **Guard:** a new test hits 400, 401, 403, two kinds of 404, 405, 422 and 429 and checks the envelope on each. Temporarily reverting the fix makes it fail.
-
-### 7. Things caught in review before they could bite
+### 6. Things caught in review before they could bite
 None of these produced a failure, because they were addressed while writing the code. I list them because each is a plausible AI-generated bug in a ledger:
 - **Stale balance after locking.** EF Core returns an *already-tracked* entity unchanged, even after `SELECT … FOR UPDATE` reloads the row. A wallet loaded before being locked would therefore carry a stale balance, silently defeating the lock. `LockWalletAsync` now refuses to lock a wallet that is already tracked.
 - **Audit hashes that can't verify.** .NET timestamps have 100 ns precision but PostgreSQL stores microseconds. Hashing the in-memory timestamp would make every audit record fail verification after a round trip. Timestamps are truncated to microseconds (`GetLedgerNow`), and an integration test verifies the chain *after* reading it back from the database.
@@ -101,7 +90,7 @@ None of these produced a failure, because they were addressed while writing the 
 - **Revocation that only happens at expiry.** A JWT stays valid until it expires, so "disable user" would take up to 15 minutes to bite. Each request now checks the user's status, role and `token_version`, and disabling or re-roling a user bumps that version.
 - **Two admins demoting each other.** Checking "is there another admin?" without a lock lets two concurrent demotions leave nobody in charge. The check locks all active admin rows first.
 
-### 8. What "naive" looks like, measured
+### 7. What "naive" looks like, measured
 The classic generated transfer is: read the balance, check it, update it, all without a lock. To show why that is unacceptable here, the agent removed `FOR UPDATE` and re-ran the concurrency suite. It did the same later for the two safeguards in the auth code:
 
 | Mutation | Outcome |
@@ -111,7 +100,7 @@ The classic generated transfer is: read the balance, check it, update it, all wi
 | No per-request user check on tokens | Disabled and demoted users kept access, and a token claiming a role its user doesn't have was accepted; 4 tests failed |
 | No row lock on refresh-token rotation | **10 of 10** concurrent refreshes of one token succeeded, so a stolen refresh token could be cloned |
 
-Everything was restored, and the full suite passes again (148 tests at the time; 150 after the response-format work).
+Everything was restored, and the full suite (148 tests) passes again.
 
 ## What I took away
 - AI was fastest at boilerplate (EF mappings, Problem Details plumbing, Swagger, Dockerfile, CI) and at producing a broad first test list.

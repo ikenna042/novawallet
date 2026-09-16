@@ -116,8 +116,8 @@ public sealed class ConcurrencyTests(LedgerApiFixture fixture, ITestOutputHelper
         foreach (var response in responses)
             await response.EnsureStatusAsync(HttpStatusCode.Created);
 
-        var receipts = await Task.WhenAll(responses.Select(r => r.ReadDataAsync<TransactionReceipt>()));
-        Assert.Single(receipts.Select(r => r.TransactionId).Distinct());
+        var receipts = await Task.WhenAll(responses.Select(r => r.Content.ReadFromJsonAsync<TransactionReceipt>()));
+        Assert.Single(receipts.Select(r => r!.TransactionId).Distinct());
         Assert.Single(responses, r => r.Headers.GetValues("Idempotent-Replayed").Single() == "false");
 
         Assert.Equal(750_00, await alice.GetBalanceAsync(aliceWallet));

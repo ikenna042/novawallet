@@ -28,23 +28,23 @@ public sealed class AuthTests(LedgerApiFixture fixture)
         var email = LedgerClient.NewEmail("ada");
         var registered = await Register(email);
         await registered.EnsureStatusAsync(HttpStatusCode.Created);
-        var profile = (await registered.ReadDataAsync<UserProfile>());
+        var profile = (await registered.Content.ReadFromJsonAsync<UserProfile>())!;
         Assert.Equal(("customer", "Active", email), (profile.Role, profile.Status, profile.Email));
 
         var login = await Login(email.ToUpperInvariant(), LedgerClient.DefaultPassword); // emails are case-insensitive
         await login.EnsureStatusAsync(HttpStatusCode.OK);
-        var tokens = (await login.ReadDataAsync<AuthTokens>());
+        var tokens = (await login.Content.ReadFromJsonAsync<AuthTokens>())!;
         Assert.Equal("Bearer", tokens.TokenType);
         Assert.InRange(tokens.ExpiresIn, 1, 3600);
         Assert.False(string.IsNullOrEmpty(tokens.RefreshToken));
 
         var client = LedgerClient.For(fixture.Factory, tokens);
-        var me = (await client.Http.GetDataAsync<UserProfile>("/api/v1/auth/me"))!;
+        var me = (await client.Http.GetFromJsonAsync<UserProfile>("/api/v1/auth/me"))!;
         Assert.Equal(profile.UserId, me.UserId);
         Assert.Null(me.WalletId);
 
         var wallet = await client.CreateWalletAsync();
-        me = (await client.Http.GetDataAsync<UserProfile>("/api/v1/auth/me"))!;
+        me = (await client.Http.GetFromJsonAsync<UserProfile>("/api/v1/auth/me"))!;
         Assert.Equal(wallet.WalletId, me.WalletId);
         Assert.NotNull(me.LastLoginAt);
     }
@@ -121,7 +121,7 @@ public sealed class AuthTests(LedgerApiFixture fixture)
 
         var rotated = await Refresh(first);
         await rotated.EnsureStatusAsync(HttpStatusCode.OK);
-        var second = (await rotated.ReadDataAsync<AuthTokens>());
+        var second = (await rotated.Content.ReadFromJsonAsync<AuthTokens>())!;
         Assert.NotEqual(first, second.RefreshToken);
 
         var fresh = LedgerClient.For(fixture.Factory, second);
@@ -158,14 +158,13 @@ public sealed class AuthTests(LedgerApiFixture fixture)
         var customer = await LedgerClient.CustomerAsync(fixture.Factory);
 
         var logout = await customer.Http.PostAsJsonAsync("/api/v1/auth/logout", new { refreshToken = customer.Tokens.RefreshToken });
-        Assert.Equal(HttpStatusCode.OK, logout.StatusCode);
-        Assert.Null(await logout.ReadDataAsync<object>());
+        Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await Refresh(customer.Tokens.RefreshToken)).StatusCode);
 
         // Logging out with someone else's (or a made-up) token is a silent no-op.
         var other = await LedgerClient.CustomerAsync(fixture.Factory);
         var foreign = await customer.Http.PostAsJsonAsync("/api/v1/auth/logout", new { refreshToken = other.Tokens.RefreshToken });
-        Assert.Equal(HttpStatusCode.OK, foreign.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, foreign.StatusCode);
         await (await Refresh(other.Tokens.RefreshToken)).EnsureStatusAsync(HttpStatusCode.OK);
     }
 

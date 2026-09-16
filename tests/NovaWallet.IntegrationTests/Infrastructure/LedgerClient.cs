@@ -2,7 +2,6 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
-using NovaWallet.Api.Infrastructure;
 using NovaWallet.Application;
 
 namespace NovaWallet.IntegrationTests.Infrastructure;
@@ -58,7 +57,7 @@ public sealed class LedgerClient
     {
         var response = await anonymous.PostAsJsonAsync("/api/v1/auth/login", new { email, password });
         await response.EnsureStatusAsync(HttpStatusCode.OK);
-        return await response.ReadDataAsync<AuthTokens>();
+        return (await response.Content.ReadFromJsonAsync<AuthTokens>())!;
     }
 
     public static LedgerClient For(WebApplicationFactory<Program> factory, AuthTokens tokens)
@@ -72,7 +71,7 @@ public sealed class LedgerClient
     {
         var response = await Http.PostAsJsonAsync("/api/v1/wallets", new { });
         await response.EnsureStatusAsync(HttpStatusCode.Created);
-        return await response.ReadDataAsync<WalletResponse>();
+        return (await response.Content.ReadFromJsonAsync<WalletResponse>())!;
     }
 
     public Task<HttpResponseMessage> CreditAsync(Guid walletId, long amountKobo, string? reference = null) =>
@@ -98,7 +97,7 @@ public sealed class LedgerClient
     {
         var response = await Http.GetAsync($"/api/v1/wallets/{walletId}/balance");
         await response.EnsureStatusAsync(HttpStatusCode.OK);
-        return (await response.ReadDataAsync<BalanceResponse>()).BalanceKobo;
+        return (await response.Content.ReadFromJsonAsync<BalanceResponse>())!.BalanceKobo;
     }
 
     public async Task<StatementPage> GetStatementAsync(Guid walletId, int? limit = null, string? cursor = null)
@@ -108,30 +107,12 @@ public sealed class LedgerClient
             url += $"&cursor={cursor}";
         var response = await Http.GetAsync(url);
         await response.EnsureStatusAsync(HttpStatusCode.OK);
-        return await response.ReadDataAsync<StatementPage>();
+        return (await response.Content.ReadFromJsonAsync<StatementPage>())!;
     }
 }
 
 public static class HttpAssertions
 {
-    /// <summary>Reads a success envelope, checks its statusCode/message, and returns <c>data</c>.</summary>
-    public static async Task<T> ReadDataAsync<T>(this HttpResponseMessage response)
-    {
-        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
-        var envelope = await response.Content.ReadFromJsonAsync<ApiResponse<T>>();
-        Assert.NotNull(envelope);
-        Assert.Equal((int)response.StatusCode, envelope.StatusCode);
-        Assert.False(string.IsNullOrWhiteSpace(envelope.Message));
-        return envelope.Data!;
-    }
-
-    public static async Task<T> GetDataAsync<T>(this HttpClient http, string url)
-    {
-        var response = await http.GetAsync(url);
-        await response.EnsureStatusAsync(HttpStatusCode.OK);
-        return await response.ReadDataAsync<T>();
-    }
-
     public static async Task EnsureStatusAsync(this HttpResponseMessage response, HttpStatusCode expected)
     {
         if (response.StatusCode != expected)
@@ -141,29 +122,11 @@ public static class HttpAssertions
         }
     }
 
-    /// <summary>
-    /// Reads an error body and checks it is both the envelope (statusCode, message, data: null) and RFC 7807
-    /// Problem Details with a stable code.
-    /// </summary>
     public static async Task<ProblemBody> ReadProblemAsync(this HttpResponseMessage response)
     {
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
-        var json = await response.Content.ReadAsStringAsync();
-        using var doc = System.Text.Json.JsonDocument.Parse(json);
-        var names = doc.RootElement.EnumerateObject().Select(p => p.Name).ToList();
-        Assert.Equal(new[] { "statusCode", "message", "data" }, names.Take(3));
-        Assert.Equal(System.Text.Json.JsonValueKind.Null, doc.RootElement.GetProperty("data").ValueKind);
-
-        var problem = System.Text.Json.JsonSerializer.Deserialize<ProblemBody>(json,
-            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!;
-        Assert.Equal((int)response.StatusCode, problem.StatusCode);
-        Assert.Equal(problem.StatusCode, problem.Status);
-        Assert.False(string.IsNullOrWhiteSpace(problem.Message));
-        Assert.False(string.IsNullOrWhiteSpace(problem.Code));
-        return problem;
+        return (await response.Content.ReadFromJsonAsync<ProblemBody>())!;
     }
 }
 
-public sealed record ProblemBody(
-    int StatusCode, string? Message, string? Type, string? Title, int? Status, string? Detail, string? Code,
-    string? TraceId, string? CorrelationId);
+public sealed record ProblemBody(string? Type, string? Title, int? Status, string? Detail, string? Code, string? TraceId, string? CorrelationId);
