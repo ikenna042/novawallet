@@ -69,7 +69,7 @@ curl -s -X POST localhost:8080/api/v1/wallets/$A/credit -H "Authorization: Beare
 # Transfer ₦2,500 (run it twice: the second response carries Idempotent-Replayed: true)
 curl -si -X POST localhost:8080/api/v1/transfers -H "Authorization: Bearer $T_ALICE" \
   -H 'Content-Type: application/json' -H 'Idempotency-Key: 6f1c1f5e-4d0a-4c61-9d67-2d7e0b3a9a10' \
-  -d "{\"sourceWalletId\":\"$A\",\"destinationWalletId\":\"$B\",\"amountKobo\":250000}"
+  -d "{\"destinationWalletId\":\"$B\",\"amountKobo\":250000}"      # always sent from the signed-in user's wallet
 
 curl -s localhost:8080/api/v1/wallets/$A/statement -H "Authorization: Bearer $T_ALICE" | jq
 curl -s localhost:8080/api/v1/wallets/$A/audit -H "Authorization: Bearer $T_ADMIN" | jq '.chainIntact'
@@ -91,8 +91,8 @@ dotnet test
 
 | Suite | Count | What it covers |
 |---|---|---|
-| `NovaWallet.UnitTests` | 74 | `Money` arithmetic and overflow, WAT day boundaries, daily-limit edge cases, audit hash chain, request validation, transfer orchestration against an in-memory store (lock order, replay, rejection caching), password and email rules, lockout, token rotation and reuse detection, wallet freeze, admin rules |
-| `NovaWallet.IntegrationTests` | 74 | The full HTTP pipeline against **real PostgreSQL**: concurrency under load, idempotency, sign-up / sign-in / refresh / logout (including concurrent refresh), instant revocation on disable and role change, admin user management, wallet freeze, admin action log, validation, Problem Details, pagination, append-only triggers, CHECK constraints, outbox, rate limiting, health, OpenAPI |
+| `NovaWallet.UnitTests` | 75 | `Money` arithmetic and overflow, WAT day boundaries, daily-limit edge cases, audit hash chain, request validation, transfer orchestration against an in-memory store (lock order, replay, rejection caching), password and email rules, lockout, token rotation and reuse detection, wallet freeze, admin rules |
+| `NovaWallet.IntegrationTests` | 76 | The full HTTP pipeline against **real PostgreSQL**: concurrency under load, idempotency, sign-up / sign-in / refresh / logout (including concurrent refresh), instant revocation on disable and role change, admin user management, wallet freeze, admin action log, validation, Problem Details, pagination, append-only triggers, CHECK constraints, outbox, rate limiting, health, OpenAPI |
 
 Integration tests start PostgreSQL with **Testcontainers**, so Docker is required; CI runs them this way.
 Without Docker, point them at any server and they create and drop a throwaway database:
@@ -140,6 +140,8 @@ All endpoints need a JWT bearer token except sign-up, sign-in, token refresh, he
 
 Sign-up, sign-in and refresh are rate-limited per client IP.
 
+**About `Idempotency-Key`.** It is a request header, not part of the transfer. The client generates a new unique value (a UUID is recommended) for each transfer it intends to make, and sends the **same** value again if it has to retry that transfer (for example after a timeout on a flaky mobile or USSD connection). The server then returns the original result, with `Idempotent-Replayed: true`, instead of moving the money twice. Reusing a key with a different body is rejected with 422 `idempotency_key_reused`.
+
 **Wallets and transfers**
 
 | Method | Path | Who | Notes |
@@ -148,7 +150,7 @@ Sign-up, sign-in and refresh are rate-limited per client IP.
 | GET | `/api/v1/wallets/{id}` | owner / admin | Includes `status` (`Active` / `Frozen`) |
 | GET | `/api/v1/wallets/{id}/balance` | owner / admin | `balanceKobo`, `currency: NGN`, `balanceDisplay: ₦7,500.00` |
 | POST | `/api/v1/wallets/{id}/credit` | **admin** | Simulated inbound NIP. Idempotent on `reference` (NIP session id) |
-| POST | `/api/v1/transfers` | owner of source | **`Idempotency-Key` header required**; rate-limited per customer |
+| POST | `/api/v1/transfers` | any customer with a wallet | Body: `destinationWalletId`, `amountKobo`, `narration?`. The **source is always the caller's own wallet** (taken from the token). **`Idempotency-Key` header required**; rate-limited per customer |
 | GET | `/api/v1/wallets/{id}/statement?limit=&cursor=` | owner / admin | Newest first, keyset pagination (`nextCursor`) |
 | GET | `/api/v1/wallets/{id}/audit` | **admin** | Append-only audit trail + `chainIntact` verification |
 
@@ -252,8 +254,8 @@ Everything below happens in **one** database transaction at READ COMMITTED:
    - If the key already exists: a different request hash returns **422**. The same hash returns the stored result, with `Idempotent-Replayed: true`.
 2. **Lock both wallets** with `SELECT … FOR UPDATE`, **always lower id first**. Two opposing transfers therefore queue instead of deadlocking.
 3. While holding the locks, **check the rules**:
-   - the caller owns the source wallet;
-   - the destination exists;
+   - the source is the caller's own wallet (resolved from the token before the transaction starts; the request can't name one);
+   - the destination exists and isn't the caller's own wallet;
    - the balance is sufficient;
    - today's outbound total (from the ledger since 00:00 WAT) + amount ≤ limit.
 4. **Write everything.** Update both balances, then insert the transaction, two ledger entries, two audit rows (each chained to that wallet's previous hash) and one outbox event.
@@ -273,6 +275,7 @@ Everything below happens in **one** database transaction at READ COMMITTED:
 | **Audit log = separate append-only table + per-wallet SHA-256 hash chain** | Tampering is detectable (`GET …/audit` returns `chainIntact`). Written in the same transaction as the balance change. | The chain is per wallet because the wallet lock is what serialises writers; a global chain would need a global lock. Timestamps are truncated to microseconds so hashes survive the PostgreSQL round trip. |
 | **Double-entry ledger entries** with running balance | The statement is a cheap keyset scan, and balances can be reconciled against entries. | A credit has a single entry; its contra side is the NIP settlement account, which is out of scope. |
 | **Transactional outbox** + `FOR UPDATE SKIP LOCKED` poller | No lost or phantom `TransferCompleted` events. Safe with several replicas. | At-least-once delivery: consumers de-duplicate on `eventId`. The publisher logs instead of calling a real broker. |
+| **Source wallet taken from the token, never from the request** | Each customer has one wallet, so there is nothing to choose. Nobody can even *ask* to debit someone else's wallet; a body that includes `sourceWalletId` is refused with 400. (Suggested in review; the first version accepted a client-supplied source and relied on an ownership check.) | If customers ever get several wallets (e.g. NovaSave pockets), the request would name one again and the ownership check, still in place as defence in depth, would carry the load. |
 | **Receipt returns only the caller's balance** | A sender must not learn the recipient's balance. | None worth noting. |
 | **Other customers' wallets return 404** | Wallet ids can't be enumerated. | None worth noting. |
 | **Migrations on startup** (compose / dev only) | Satisfies the single-command start. | In production this would be a separate migration job, since concurrent replicas would race. |
@@ -339,8 +342,8 @@ src/
   NovaWallet.Infrastructure/  LedgerDbContext, LedgerStore, UserStore (locks, idempotency SQL), password hasher, admin seeder, migrations, outbox
   NovaWallet.Api/             Controllers (wallets, transfers, auth, admin), JWT issuing/validation, Problem Details, rate limiting, correlation id
 tests/
-  NovaWallet.UnitTests/         74 tests
-  NovaWallet.IntegrationTests/  74 tests (PostgreSQL via Testcontainers or NOVAWALLET_TEST_DB)
+  NovaWallet.UnitTests/         75 tests
+  NovaWallet.IntegrationTests/  76 tests (PostgreSQL via Testcontainers or NOVAWALLET_TEST_DB)
 scripts/smoke-test.sh         end-to-end check used by CI against `docker compose up`
 .github/workflows/ci.yml      build + all tests; compose smoke test
 docs/                         testing guide, presentation deck

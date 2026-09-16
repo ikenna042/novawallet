@@ -13,6 +13,9 @@ public interface ILedgerStore
     /// <summary>Read-only lookup (no lock). Never use the result to decide a balance mutation.</summary>
     Task<Wallet?> FindWalletAsync(Guid walletId, CancellationToken ct);
 
+    /// <summary>The id of the customer's wallet (a customer has at most one), or null.</summary>
+    Task<Guid?> FindWalletIdByCustomerAsync(string customerId, CancellationToken ct);
+
     /// <summary>Returns false if the customer already has a wallet.</summary>
     Task<bool> TryCreateWalletAsync(Wallet wallet, CancellationToken ct);
 

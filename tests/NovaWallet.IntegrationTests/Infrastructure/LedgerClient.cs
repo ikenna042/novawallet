@@ -82,11 +82,12 @@ public sealed class LedgerClient
             narration = "Inbound NIP transfer",
         });
 
-    public Task<HttpResponseMessage> TransferAsync(Guid from, Guid to, long amountKobo, string? idempotencyKey = null, string? narration = null)
+    /// <summary>Sends money from this user's own wallet (the API takes the source from the token).</summary>
+    public Task<HttpResponseMessage> TransferAsync(Guid to, long amountKobo, string? idempotencyKey = null, string? narration = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/transfers")
         {
-            Content = JsonContent.Create(new { sourceWalletId = from, destinationWalletId = to, amountKobo, narration }),
+            Content = JsonContent.Create(new { destinationWalletId = to, amountKobo, narration }),
         };
         if (idempotencyKey is not null)
             request.Headers.Add("Idempotency-Key", idempotencyKey);

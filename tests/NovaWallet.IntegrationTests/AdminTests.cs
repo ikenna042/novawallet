@@ -89,7 +89,7 @@ public sealed class AdminTests(LedgerApiFixture fixture)
         // The access token is still unexpired, but it no longer works...
         Assert.Equal(HttpStatusCode.Unauthorized, (await customer.Http.GetAsync("/api/v1/auth/me")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized,
-            (await customer.TransferAsync(wallet, (await FundedCustomerAsync(0)).WalletId, 1_00, Guid.NewGuid().ToString())).StatusCode);
+            (await customer.TransferAsync((await FundedCustomerAsync(0)).WalletId, 1_00, Guid.NewGuid().ToString())).StatusCode);
         // ...nor does the refresh token, nor signing in again.
         var anonymous = fixture.Factory.CreateClient();
         Assert.Equal(HttpStatusCode.Unauthorized,
@@ -157,17 +157,17 @@ public sealed class AdminTests(LedgerApiFixture fixture)
         var state = (await frozen.Content.ReadFromJsonAsync<WalletResponse>())!;
         Assert.Equal(("Frozen", "Chargeback dispute #4471"), (state.Status, state.FrozenReason));
 
-        var outbound = await alice.TransferAsync(aliceWallet, bobWallet, 1_00, Guid.NewGuid().ToString());
+        var outbound = await alice.TransferAsync(bobWallet, 1_00, Guid.NewGuid().ToString());
         Assert.Equal(HttpStatusCode.UnprocessableEntity, outbound.StatusCode);
         Assert.Equal("wallet_frozen", (await outbound.ReadProblemAsync()).Code);
 
-        await (await bob.TransferAsync(bobWallet, aliceWallet, 2_00, Guid.NewGuid().ToString())).EnsureStatusAsync(HttpStatusCode.Created);
+        await (await bob.TransferAsync(aliceWallet, 2_00, Guid.NewGuid().ToString())).EnsureStatusAsync(HttpStatusCode.Created);
         await (await Admin.CreditAsync(aliceWallet, 3_00)).EnsureStatusAsync(HttpStatusCode.Created);
         Assert.Equal(10_005_00, await alice.GetBalanceAsync(aliceWallet));
         Assert.Equal("Frozen", (await alice.Http.GetFromJsonAsync<WalletResponse>($"/api/v1/wallets/{aliceWallet}"))!.Status);
 
         await (await Post(Admin, $"/api/v1/admin/wallets/{aliceWallet}/unfreeze")).EnsureStatusAsync(HttpStatusCode.OK);
-        await (await alice.TransferAsync(aliceWallet, bobWallet, 1_00, Guid.NewGuid().ToString())).EnsureStatusAsync(HttpStatusCode.Created);
+        await (await alice.TransferAsync(bobWallet, 1_00, Guid.NewGuid().ToString())).EnsureStatusAsync(HttpStatusCode.Created);
     }
 
     [Fact]

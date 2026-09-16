@@ -20,7 +20,7 @@ public sealed class WalletsController(WalletService wallets) : ControllerBase
         [Required, StringLength(64, MinimumLength = 8)] string? Reference,
         [StringLength(RequestGuard.MaxNarrationLength)] string? Narration);
 
-    /// <summary>Create a wallet (balance zero). Customers create their own; operators may pass customerId.</summary>
+    /// <summary>Create a wallet (balance zero). Customers create their own; admins may pass the customerId (user id) of a registered user.</summary>
     [HttpPost]
     [ProducesResponseType<WalletResponse>(StatusCodes.Status201Created)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]

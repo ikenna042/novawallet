@@ -10,7 +10,8 @@ public sealed record CreateWalletCommand(string? CustomerId);
 
 public sealed record CreditCommand(long AmountKobo, string? Reference, string? Narration);
 
-public sealed record TransferCommand(Guid SourceWalletId, Guid DestinationWalletId, long AmountKobo, string? Narration);
+/// <summary>A transfer from the caller's own wallet; the source is never taken from the request.</summary>
+public sealed record TransferCommand(Guid DestinationWalletId, long AmountKobo, string? Narration);
 
 public sealed record WalletResponse(
     Guid WalletId, string CustomerId, long BalanceKobo, string Currency, string Status, string? FrozenReason, DateTimeOffset CreatedAt);

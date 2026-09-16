@@ -138,7 +138,7 @@ async function icon(Comp, color, size = 256) {
     header(s, "Outcome", "What was delivered — and verified");
     const stats = [
       ["200 → 10", "parallel ₦100 transfers from a ₦1,000 wallet: exactly 10 succeed, 190 refused"],
-      ["148", "automated tests: 74 unit + 74 against real PostgreSQL, all green"],
+      ["151", "automated tests: 75 unit + 76 against real PostgreSQL, all green"],
       ["0", "negative balances or deadlocks across repeated load runs"],
       ["1", "command to run it: docker compose up (a CI job runs exactly that)"],
     ];
@@ -153,7 +153,7 @@ async function icon(Comp, color, size = 256) {
       { text: "password sign-in with rotating refresh tokens · admin API (users, freezes, action log) · Swagger/OpenAPI · rate limiting · transactional outbox · Serilog correlation IDs · health probes · hash-chained audit trail · CI with a compose smoke test · README, testing guide, AI_USAGE.md" },
     ], { x: 0.5, y: 4.1, w: 9, h: 0.8, fontSize: 12.5, color: C.ink });
     footer(s, 3);
-    s.addNotes("The headline: 200 transfers fired at the same instant against a thousand-naira wallet — exactly ten succeed, every time, balance lands on zero, and the ledger agrees. 148 tests in total, half of them against real Postgres. All four stretch goals are in, plus real sign-in and an admin flow.");
+    s.addNotes("The headline: 200 transfers fired at the same instant against a thousand-naira wallet — exactly ten succeed, every time, balance lands on zero, and the ledger agrees. 151 tests in total, about half of them against real Postgres. All four stretch goals are in, plus real sign-in and an admin flow.");
   }
 
   // ---------- 4. Architecture ----------
@@ -204,7 +204,7 @@ async function icon(Comp, color, size = 256) {
     const steps = [
       ["1", "Claim key", "INSERT … ON CONFLICT DO NOTHING — a duplicate in flight waits here"],
       ["2", "Lock wallets", "SELECT … FOR UPDATE, lower id first → no deadlocks"],
-      ["3", "Check rules", "owner · funds · daily limit — all while holding the locks"],
+      ["3", "Check rules", "source = your own wallet · funds · daily limit — under the locks"],
       ["4", "Write all", "balances · transaction · 2 entries · 2 audit rows · outbox"],
       ["5", "Commit", "store response on the key; locks released"],
     ];
@@ -351,7 +351,7 @@ async function icon(Comp, color, size = 256) {
     header(s, "Security & Nigerian context", "Built for where it would actually run");
     const tiles = [
       [I.user, "Auth", "JWT signature, issuer, audience, expiry; HS256 pinned (alg:none rejected); user status + token version checked per request; admin role checked twice"],
-      [I.eye, "No probing", "Other customers' wallets return 404; receipts show only the sender's balance"],
+      [I.eye, "No probing", "Source wallet comes from the token; others' wallets return 404; receipts show only the sender's balance"],
       [I.shield, "Input", "Strict JSON (100.5 or \"100\" refused), unknown fields rejected, safe-charset keys & IDs (no log injection)"],
       [I.file, "NDPA 2023", "Only email, optional name and a password hash; no BVN/NIN; tokens carry no PII; bodies never logged"],
       [I.phone, "USSD & NIP", "Retries made harmless by idempotency; NIP session ID de-duplicates credits; gateway can pass X-Correlation-ID"],

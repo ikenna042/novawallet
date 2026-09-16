@@ -49,7 +49,7 @@ public sealed class ConcurrencyTests(LedgerApiFixture fixture, ITestOutputHelper
 
         var sw = Stopwatch.StartNew();
         var responses = await Burst(attempts, _ =>
-            alice.TransferAsync(aliceWallet, bobWallet, amount, Guid.NewGuid().ToString()));
+            alice.TransferAsync(bobWallet, amount, Guid.NewGuid().ToString()));
         sw.Stop();
 
         var statuses = responses.GroupBy(r => r.StatusCode).ToDictionary(g => g.Key, g => g.Count());
@@ -91,8 +91,8 @@ public sealed class ConcurrencyTests(LedgerApiFixture fixture, ITestOutputHelper
 
         var sw = Stopwatch.StartNew();
         var responses = await Burst(perDirection * 2, i => i % 2 == 0
-            ? alice.TransferAsync(aliceWallet, bobWallet, 1_00, Guid.NewGuid().ToString())
-            : bob.TransferAsync(bobWallet, aliceWallet, 1_00, Guid.NewGuid().ToString()));
+            ? alice.TransferAsync(bobWallet, 1_00, Guid.NewGuid().ToString())
+            : bob.TransferAsync(aliceWallet, 1_00, Guid.NewGuid().ToString()));
         sw.Stop();
         output.WriteLine($"{perDirection * 2} opposing transfers in {sw.ElapsedMilliseconds} ms");
 
@@ -111,7 +111,7 @@ public sealed class ConcurrencyTests(LedgerApiFixture fixture, ITestOutputHelper
         var (bob, bobWallet) = await NewFundedCustomerAsync(0);
         var key = Guid.NewGuid().ToString();
 
-        var responses = await Burst(50, _ => alice.TransferAsync(aliceWallet, bobWallet, 250_00, key));
+        var responses = await Burst(50, _ => alice.TransferAsync(bobWallet, 250_00, key));
 
         foreach (var response in responses)
             await response.EnsureStatusAsync(HttpStatusCode.Created);
@@ -132,7 +132,7 @@ public sealed class ConcurrencyTests(LedgerApiFixture fixture, ITestOutputHelper
         var (_, bobWallet) = await NewFundedCustomerAsync(0);
 
         var responses = await Burst(40, _ =>
-            alice.TransferAsync(aliceWallet, bobWallet, 20_000_00, Guid.NewGuid().ToString()));
+            alice.TransferAsync(bobWallet, 20_000_00, Guid.NewGuid().ToString()));
 
         Assert.Equal(25, responses.Count(r => r.StatusCode == HttpStatusCode.Created));
         var rejected = responses.Where(r => r.StatusCode == HttpStatusCode.UnprocessableEntity).ToList();
@@ -150,7 +150,7 @@ public sealed class ConcurrencyTests(LedgerApiFixture fixture, ITestOutputHelper
         var senders = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => NewFundedCustomerAsync(5_00)));
 
         var responses = await Burst(senders.Length, i =>
-            senders[i].Client.TransferAsync(senders[i].WalletId, receiverWallet, 5_00, Guid.NewGuid().ToString()));
+            senders[i].Client.TransferAsync(receiverWallet, 5_00, Guid.NewGuid().ToString()));
 
         foreach (var response in responses)
             await response.EnsureStatusAsync(HttpStatusCode.Created);

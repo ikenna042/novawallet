@@ -31,7 +31,7 @@ public class TransferServiceTests
     private static Actor Alice => new("alice", IsAdmin: false);
 
     private Task<IdempotentResult<TransactionReceipt>> Transfer(long amount, string key, string? narration = null, Actor? actor = null) =>
-        _service.TransferAsync(actor ?? Alice, key, new TransferCommand(_alice.Id, _bob.Id, amount, narration), "corr-1",
+        _service.TransferAsync(actor ?? Alice, key, new TransferCommand(_bob.Id, amount, narration), "corr-1",
             CancellationToken.None);
 
     [Fact]
@@ -85,7 +85,7 @@ public class TransferServiceTests
     public async Task A_rejected_transfer_is_remembered_and_replays_the_same_error()
     {
         var bob = new Actor("bob", IsAdmin: false);
-        var fromEmptyWallet = new TransferCommand(_bob.Id, _alice.Id, 1_00, null);
+        var fromEmptyWallet = new TransferCommand(_alice.Id, 1_00, null); // Bob's wallet is empty
         Task<IdempotentResult<TransactionReceipt>> Attempt() =>
             _service.TransferAsync(bob, "key-00000002", fromEmptyWallet, null, CancellationToken.None);
 
@@ -98,11 +98,29 @@ public class TransferServiceTests
     }
 
     [Fact]
-    public async Task Customer_cannot_spend_from_someone_elses_wallet()
+    public async Task Customer_without_a_wallet_cannot_transfer()
     {
-        await Assert.ThrowsAsync<WalletNotFoundException>(() =>
+        var ex = await Assert.ThrowsAsync<WalletNotFoundException>(() =>
             Transfer(1_00, "key-00000003", actor: new Actor("mallory", IsAdmin: false)));
+        Assert.Contains("don't have a wallet", ex.Message);
         Assert.Equal(0, _store.Wallets[_bob.Id].BalanceKobo);
+        Assert.Empty(_store.Keys); // nothing recorded: the same key can be used once a wallet exists
+    }
+
+    [Fact]
+    public async Task Transfer_always_debits_the_callers_own_wallet()
+    {
+        // Bob sends to Alice: the source is Bob's wallet because Bob is signed in, not because of anything in the request.
+        await Assert.ThrowsAsync<InsufficientFundsException>(() => _service.TransferAsync(
+            new Actor("bob", IsAdmin: false), "key-00000004", new TransferCommand(_alice.Id, 1_00, null), null,
+            CancellationToken.None));
+        Assert.Equal(1_000_000_00, _store.Wallets[_alice.Id].BalanceKobo);
+
+        _store.Wallets[_bob.Id].Credit(Money.FromKobo(5_00), _clock.GetUtcNow());
+        var receipt = await _service.TransferAsync(
+            new Actor("bob", IsAdmin: false), "key-00000005", new TransferCommand(_alice.Id, 2_00, null), null,
+            CancellationToken.None);
+        Assert.Equal((_bob.Id, _alice.Id, 3_00L), (receipt.Value.SourceWalletId!.Value, receipt.Value.DestinationWalletId, receipt.Value.BalanceAfterKobo));
     }
 
     [Fact]
@@ -127,7 +145,7 @@ public class TransferServiceTests
     public async Task Transfer_to_the_same_wallet_is_rejected_before_touching_the_store()
     {
         await Assert.ThrowsAsync<SameWalletTransferException>(() => _service.TransferAsync(
-            Alice, "key-00000020", new TransferCommand(_alice.Id, _alice.Id, 1_00, null), null, CancellationToken.None));
+            Alice, "key-00000020", new TransferCommand(_alice.Id, 1_00, null), null, CancellationToken.None));
         Assert.Empty(_store.LockOrder);
     }
 

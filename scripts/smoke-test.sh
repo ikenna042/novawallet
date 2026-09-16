@@ -17,7 +17,8 @@ uuid() { uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())'; }
 # Build JSON with jq rather than inline "{\"a\":1,...}" strings: inside "$( )" the old bash 3.2 that
 # ships with macOS brace-expands the commas and splits the body into several arguments.
 json() { jq -nc "$@"; }
-transfer_body() { json --arg s "$1" --arg d "$2" --argjson a "$3" '{sourceWalletId:$s,destinationWalletId:$d,amountKobo:$a}'; }
+# The source wallet is always the signed-in user's own; a transfer body only names the destination.
+transfer_body() { json --arg d "$1" --argjson a "$2" '{destinationWalletId:$d,amountKobo:$a}'; }
 
 echo "Waiting for $BASE/health/ready ..."
 for _ in $(seq 1 60); do
@@ -74,8 +75,8 @@ expect "customer cannot credit (403)" \
   "$(post "/api/v1/wallets/$A/credit" "$(json --arg r "NIPX$RUN" '{amountKobo:1000000,reference:$r}')" "$ALICE" -o /dev/null -w '%{http_code}')" "403"
 
 KEY=$(uuid)
-BODY=$(transfer_body "$A" "$B" 250000)
-OTHER_BODY=$(transfer_body "$A" "$B" 999)
+BODY=$(transfer_body "$B" 250000)
+OTHER_BODY=$(transfer_body "$B" 999)
 expect "transferred ₦2,500 Alice → Bob" \
   "$(post /api/v1/transfers "$BODY" "$ALICE" -H "Idempotency-Key: $KEY" -o /dev/null -w '%{http_code}')" "201"
 replayed=$(post /api/v1/transfers "$BODY" "$ALICE" -H "Idempotency-Key: $KEY" -D - -o /dev/null | tr -d '\r' | awk -F': ' 'tolower($1)=="idempotent-replayed"{print $2}')
@@ -83,7 +84,11 @@ expect "same Idempotency-Key is replayed, not re-executed" "$replayed" "true"
 expect "same key with a different body is rejected" \
   "$(post /api/v1/transfers "$OTHER_BODY" "$ALICE" -H "Idempotency-Key: $KEY" | jq -r .code)" "idempotency_key_reused"
 expect "overdraft by 1 kobo is refused" \
-  "$(post /api/v1/transfers "$(transfer_body "$B" "$A" 250001)" "$BOB" -H "Idempotency-Key: $(uuid)" | jq -r .code)" "insufficient_funds"
+  "$(post /api/v1/transfers "$(transfer_body "$A" 250001)" "$BOB" -H "Idempotency-Key: $(uuid)" | jq -r .code)" "insufficient_funds"
+
+STEAL_BODY=$(json --arg s "$A" --arg d "$B" '{sourceWalletId:$s,destinationWalletId:$d,amountKobo:100}')
+expect "Bob can't name Alice's wallet as the source (400)" \
+  "$(post /api/v1/transfers "$STEAL_BODY" "$BOB" -H "Idempotency-Key: $(uuid)" -o /dev/null -w '%{http_code}')" "400"
 
 expect "Alice's balance is ₦7,500" "$(get "/api/v1/wallets/$A/balance" "$ALICE" | jq -r .balanceKobo)" "750000"
 expect "Bob's balance is ₦2,500" "$(get "/api/v1/wallets/$B/balance" "$BOB" | jq -r .balanceKobo)" "250000"
@@ -99,12 +104,12 @@ expect "admin finds Alice and her wallet" \
 
 post "/api/v1/admin/wallets/$A/freeze" '{"reason":"Smoke test hold"}' "$ADMIN" > /dev/null
 expect "frozen wallet cannot send (wallet_frozen)" \
-  "$(post /api/v1/transfers "$(transfer_body "$A" "$B" 100)" "$ALICE" -H "Idempotency-Key: $(uuid)" | jq -r .code)" "wallet_frozen"
+  "$(post /api/v1/transfers "$(transfer_body "$B" 100)" "$ALICE" -H "Idempotency-Key: $(uuid)" | jq -r .code)" "wallet_frozen"
 expect "frozen wallet can still receive" \
-  "$(post /api/v1/transfers "$(transfer_body "$B" "$A" 100)" "$BOB" -H "Idempotency-Key: $(uuid)" -o /dev/null -w '%{http_code}')" "201"
+  "$(post /api/v1/transfers "$(transfer_body "$A" 100)" "$BOB" -H "Idempotency-Key: $(uuid)" -o /dev/null -w '%{http_code}')" "201"
 post "/api/v1/admin/wallets/$A/unfreeze" '{}' "$ADMIN" > /dev/null
 expect "after unfreezing, Alice can send again" \
-  "$(post /api/v1/transfers "$(transfer_body "$A" "$B" 100)" "$ALICE" -H "Idempotency-Key: $(uuid)" -o /dev/null -w '%{http_code}')" "201"
+  "$(post /api/v1/transfers "$(transfer_body "$B" 100)" "$ALICE" -H "Idempotency-Key: $(uuid)" -o /dev/null -w '%{http_code}')" "201"
 
 BOB_ID=$(get /api/v1/auth/me "$BOB" | jq -r .userId)
 post "/api/v1/admin/users/$BOB_ID/disable" '{"reason":"Smoke test"}' "$ADMIN" > /dev/null

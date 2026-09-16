@@ -13,6 +13,13 @@ public sealed class LedgerStore(LedgerDbContext db) : ILedgerStore
     public Task<Wallet?> FindWalletAsync(Guid walletId, CancellationToken ct) =>
         db.Wallets.AsNoTracking().SingleOrDefaultAsync(w => w.Id == walletId, ct);
 
+    // Reading this before taking the lock is safe: a wallet never changes owner.
+    public Task<Guid?> FindWalletIdByCustomerAsync(string customerId, CancellationToken ct) =>
+        db.Wallets.AsNoTracking()
+            .Where(w => w.CustomerId == customerId)
+            .Select(w => (Guid?)w.Id)
+            .SingleOrDefaultAsync(ct);
+
     public async Task<bool> TryCreateWalletAsync(Wallet wallet, CancellationToken ct)
     {
         db.Wallets.Add(wallet);

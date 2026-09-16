@@ -39,8 +39,10 @@ public sealed class DailyLimitExceededException(Money limit, Money remaining)
     : DomainException(ErrorCodes.DailyLimitExceeded,
         $"This transfer exceeds the daily outbound limit of {limit}. Remaining today: {remaining}.");
 
-public sealed class WalletNotFoundException(Guid walletId)
-    : DomainException(ErrorCodes.WalletNotFound, $"Wallet '{walletId}' was not found.");
+public sealed class WalletNotFoundException(string message) : DomainException(ErrorCodes.WalletNotFound, message)
+{
+    public WalletNotFoundException(Guid walletId) : this($"Wallet '{walletId}' was not found.") { }
+}
 
 public sealed class WalletAlreadyExistsException()
     : DomainException(ErrorCodes.WalletAlreadyExists, "This customer already has a wallet.");

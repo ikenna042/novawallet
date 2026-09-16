@@ -7,7 +7,7 @@ This task was built with an AI coding agent working under my direction. This fil
 | Tool | Used for |
 |---|---|
 | **Claude Code** (desktop app, Claude Opus 5 model) | Reading the brief, proposing the plan, scaffolding the solution, writing code, tests, Dockerfile, CI, README and the presentation deck. It also ran the builds, the tests and a local PostgreSQL. |
-| .NET 8 SDK, xUnit, Testcontainers | Checking every change the AI made: build with warnings-as-errors, 74 unit tests, 74 integration tests against real PostgreSQL 16. |
+| .NET 8 SDK, xUnit, Testcontainers | Checking every change the AI made: build with warnings-as-errors, 75 unit tests, 76 integration tests against real PostgreSQL 16. |
 | OrbStack (Docker) | Running `docker compose up` locally and the smoke script against it. |
 
 My role was to set scope and constraints, make the judgement calls, and require evidence (tests and deliberately broken code) before accepting a claim.
@@ -38,6 +38,11 @@ My role was to set scope and constraints, make the judgement calls, and require 
    - **What came back:** first an explanation (the brief allows a mock issuer, and the mock tokens were already real, fully validated JWTs), then a design with choices for me to make.
    - **My decisions:** auth built into the service rather than a Keycloak container (to keep my 8 GB laptop light); the first admin seeded from environment variables; `/dev/token` removed; admins can credit wallets, read audit trails, manage users, view any wallet and freeze wallets.
    - The agent then built register / login / refresh / logout and the admin endpoints, growing the suite from 91 to 148 tests, and repeated the "break it on purpose" check on the new security code (section 7).
+
+6. **"For transfer, I am seeing source and destination wallets, why not pick the logged in user as source to avoid another user transferring from another account. Plus what is the Idempotency key field"**
+   - **What came back:** confirmation that the old design was already safe (a non-owner got 404, and a test covered it), but that my suggestion was better. Each customer has one wallet, so the source should come from the token and the request shouldn't be able to name one. Also an explanation of the `Idempotency-Key` header, which is now in the Swagger description too.
+   - **Honest note:** the AI's original API accepted a client-supplied `sourceWalletId` and relied on an ownership check. It worked, but it left an unnecessary way to ask for someone else's money. My review removed it: a body containing `sourceWalletId` is now refused with 400, and there's a test for it.
+   - In the same step I asked to revert an earlier `{ statusCode, message, data }` response wrapper (it's reverted in git history) so every response stays plain resources plus RFC 7807 errors, as the brief recommends.
 
 ## Where the AI was wrong or naive, and how it was caught
 
@@ -100,7 +105,7 @@ The classic generated transfer is: read the balance, check it, update it, all wi
 | No per-request user check on tokens | Disabled and demoted users kept access, and a token claiming a role its user doesn't have was accepted; 4 tests failed |
 | No row lock on refresh-token rotation | **10 of 10** concurrent refreshes of one token succeeded, so a stolen refresh token could be cloned |
 
-Everything was restored, and the full suite (148 tests) passes again.
+Everything was restored, and the full suite passes again (148 tests at the time; 151 now).
 
 ## What I took away
 - AI was fastest at boilerplate (EF mappings, Problem Details plumbing, Swagger, Dockerfile, CI) and at producing a broad first test list.

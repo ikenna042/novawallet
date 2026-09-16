@@ -4,9 +4,9 @@ Three ways to test, from quickest to deepest:
 
 | Way | Time | Proves |
 |---|---|---|
-| **A. Smoke script** (`./scripts/smoke-test.sh`) | 5 s | The main flow works end to end, including sign-in and admin actions (30 checks) |
+| **A. Smoke script** (`./scripts/smoke-test.sh`) | 5 s | The main flow works end to end, including sign-in and admin actions (31 checks) |
 | **B. By hand**, in Swagger or with curl (sections 2–5) | 15–20 min | Each requirement, one at a time, in front of an audience |
-| **C. Automated suite** (`dotnet test`, section 6) | ~20 s | Everything (148 tests), including 200-request concurrency |
+| **C. Automated suite** (`dotnet test`, section 6) | ~20 s | Everything (151 tests), including 200-request concurrency |
 
 ---
 
@@ -161,13 +161,13 @@ curl -s -X POST $BASE/api/v1/admin/wallets/$A/freeze -H "Authorization: Bearer $
 
 send() { curl -s -o /dev/null -w "%{http_code}\n" -X POST $BASE/api/v1/transfers -H "Authorization: Bearer $1" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" \
-  -d "{\"sourceWalletId\":\"$2\",\"destinationWalletId\":\"$3\",\"amountKobo\":$4}"; }
-send "$ALICE" "$A" "$B" 100     # 422: wallet_frozen
+  -d "{\"destinationWalletId\":\"$2\",\"amountKobo\":$3}"; }     # send TOKEN TO AMOUNT: from the token owner's wallet
+send "$ALICE" "$B" 100     # 422: wallet_frozen
 curl -s -X POST $BASE/api/v1/wallets/$A/credit -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
   -d "{\"amountKobo\":100,\"reference\":\"NIP${RUN}0101\"}" -o /dev/null -w '%{http_code}\n'   # 201: money can still arrive
 
 curl -s -X POST $BASE/api/v1/admin/wallets/$A/unfreeze -H "Authorization: Bearer $ADMIN" | jq .status   # "Active"
-send "$ALICE" "$A" "$B" 100     # 201
+send "$ALICE" "$B" 100     # 201
 ```
 
 ### AD5. Admin action log
@@ -233,12 +233,14 @@ To see the response headers, add `-i` to curl.
 
 ### R4. Transfer: *"atomically … concurrency-safe … never negative … no double-spend"*
 
-Single transfer of ₦250:
+The body names only the **destination**. The money always comes from the signed-in user's own wallet, so there is no way to ask for someone else's wallet to be debited.
+
+Single transfer of ₦250 from Alice to Bob:
 
 ```bash
 curl -si -X POST $BASE/api/v1/transfers -H "Authorization: Bearer $ALICE" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" \
-  -d "{\"sourceWalletId\":\"$A\",\"destinationWalletId\":\"$B\",\"amountKobo\":25000,\"narration\":\"Lunch\"}"
+  -d "{\"destinationWalletId\":\"$B\",\"amountKobo\":25000,\"narration\":\"Lunch\"}"
 ```
 
 Expected: **201**. `balanceAfterKobo` is **Alice's** balance only; a sender never sees the recipient's balance.
@@ -253,7 +255,7 @@ curl -s -X POST $BASE/api/v1/wallets/$D/credit -H "Authorization: Bearer $ADMIN"
 
 seq 1 15 | xargs -P 15 -I{} sh -c "curl -s -o /dev/null -w '%{http_code}\n' -X POST $BASE/api/v1/transfers \
   -H 'Authorization: Bearer $DEMO' -H 'Content-Type: application/json' -H \"Idempotency-Key: \$(uuidgen)\" \
-  -d '{\"sourceWalletId\":\"$D\",\"destinationWalletId\":\"$B\",\"amountKobo\":10000}'" | sort | uniq -c
+  -d '{\"destinationWalletId\":\"$B\",\"amountKobo\":10000}'" | sort | uniq -c
 
 curl -s $BASE/api/v1/wallets/$D/balance -H "Authorization: Bearer $DEMO" | jq .balanceKobo
 ```
@@ -270,8 +272,9 @@ Only 15 requests are used because the transfer endpoint is rate-limited to 20 pe
 
 | Also try | Expected |
 |---|---|
-| `destinationWalletId` equal to `sourceWalletId` | **400** `same_wallet_transfer` |
-| Bob sends from Alice's wallet | **404** (Bob can't touch a wallet he doesn't own) |
+| `destinationWalletId` set to your own wallet | **400** `same_wallet_transfer` |
+| Bob adds `"sourceWalletId":"<Alice's wallet>"` to the body | **400**: the field doesn't exist, and nothing moves from Alice's wallet |
+| A signed-in user who hasn't created a wallet yet | **404** `wallet_not_found` ("You don't have a wallet yet") |
 | Amount 1 kobo more than the balance | **422** `insufficient_funds` |
 | Sending from a frozen wallet | **422** `wallet_frozen` (see AD4) |
 
@@ -279,10 +282,12 @@ Only 15 requests are used because the transfer endpoint is rate-limited to 20 pe
 
 ### R5. Idempotency: *"replay must not double-process; same key + different payload rejected"*
 
+`Idempotency-Key` is a request **header**, not part of the transfer (Swagger shows it as a field above the body). Generate a new unique value (e.g. `uuidgen`) for every transfer you mean to make, and reuse that same value only when retrying that transfer, for example after a timeout. The server then returns the original result instead of sending the money twice.
+
 ```bash
 KEY=$(uuidgen)
-BODY="{\"sourceWalletId\":\"$A\",\"destinationWalletId\":\"$B\",\"amountKobo\":5000}"
-OTHER="{\"sourceWalletId\":\"$A\",\"destinationWalletId\":\"$B\",\"amountKobo\":9999}"
+BODY="{\"destinationWalletId\":\"$B\",\"amountKobo\":5000}"
+OTHER="{\"destinationWalletId\":\"$B\",\"amountKobo\":9999}"
 replay() { curl -si -X POST $BASE/api/v1/transfers -H "Authorization: Bearer $ALICE" \
           -H 'Content-Type: application/json' -H "Idempotency-Key: $KEY" -d "$1" | grep -iE '^HTTP|replayed|"code"|transactionId' | cut -c1-90; }
 
@@ -322,7 +327,7 @@ curl -s -X POST $BASE/api/v1/wallets/$C/credit -H "Authorization: Bearer $ADMIN"
   -d "{\"amountKobo\":100000000,\"reference\":\"NIP${RUN}0009\"}" > /dev/null          # ₦1,000,000
 
 xfer() { curl -s -X POST $BASE/api/v1/transfers -H "Authorization: Bearer $RICH" -H 'Content-Type: application/json' \
-  -H "Idempotency-Key: $(uuidgen)" -d "{\"sourceWalletId\":\"$C\",\"destinationWalletId\":\"$B\",\"amountKobo\":$1}" | jq -c '{amountKobo, code, detail}'; }
+  -H "Idempotency-Key: $(uuidgen)" -d "{\"destinationWalletId\":\"$B\",\"amountKobo\":$1}" | jq -c '{amountKobo, code, detail}'; }
 
 xfer 30000000     # ₦300,000 → ok
 xfer 20000000     # ₦200,000 → ok (exactly at the limit)
@@ -389,7 +394,7 @@ EVE=$(signup eve); E=$(curl -s -X POST $BASE/api/v1/wallets -H "Authorization: B
 for i in $(seq 1 25); do
   curl -s -o /dev/null -w '%{http_code} ' -X POST $BASE/api/v1/transfers -H "Authorization: Bearer $EVE" \
     -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" \
-    -d "{\"sourceWalletId\":\"$E\",\"destinationWalletId\":\"$B\",\"amountKobo\":1}"
+    -d "{\"destinationWalletId\":\"$B\",\"amountKobo\":1}"
 done; echo
 ```
 
@@ -418,7 +423,7 @@ Expected:
 ```bash
 curl -s -o /dev/null -D - -X POST $BASE/api/v1/transfers -H "Authorization: Bearer $ALICE" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" -H 'X-Correlation-ID: demo-ussd-session-42' \
-  -d "{\"sourceWalletId\":\"$A\",\"destinationWalletId\":\"$B\",\"amountKobo\":100}" | grep -i correlation
+  -d "{\"destinationWalletId\":\"$B\",\"amountKobo\":100}" | grep -i correlation
 
 docker compose logs api | grep demo-ussd-session-42
 curl -s $BASE/api/v1/wallets/$A/audit -H "Authorization: Bearer $ADMIN" | jq '.records[-1].correlationId'
@@ -443,8 +448,8 @@ Expected: with the database stopped, readiness returns **503 Unhealthy** while l
 You need the .NET 8 SDK. With Docker running (OrbStack), the integration tests start their own PostgreSQL:
 
 ```bash
-dotnet test                                                     # everything: 148 tests
-dotnet test tests/NovaWallet.UnitTests                          # 74 unit tests, no database needed
+dotnet test                                                     # everything: 151 tests
+dotnet test tests/NovaWallet.UnitTests                          # 75 unit tests, no database needed
 dotnet test --filter "FullyQualifiedName~ConcurrencyTests" \
   --logger "console;verbosity=detailed"                         # prints the timings
 ```
@@ -458,7 +463,7 @@ If `dotnet` isn't on your PATH (it was installed user-locally), use `~/.dotnet/d
 | R1 Create wallet | `New_wallet_has_zero_ngn_balance`, `Second_wallet_for_same_customer_is_a_conflict`, `Customer_cannot_create_a_wallet_for_someone_else_but_admin_can` |
 | R2 Balance | `New_wallet_has_zero_ngn_balance`, `Customer_cannot_see_another_customers_wallet`, `Admin_can_find_a_user_and_view_their_wallet` |
 | R3 Credit | `Credit_is_idempotent_on_the_nip_reference`, `Customers_cannot_credit_wallets` |
-| R4 Transfer and concurrency | `Transfer_moves_money_and_returns_only_the_senders_balance`, **`Parallel_transfers_from_one_wallet_never_overdraw_or_double_spend`** (200 requests), `Opposing_transfers_between_two_wallets_do_not_deadlock_and_conserve_money`, `Many_senders_into_one_wallet_all_land`, `Customer_cannot_transfer_out_of_someone_elses_wallet`, unit `Wallets_are_locked_in_ascending_id_order_regardless_of_direction` |
+| R4 Transfer and concurrency | `Transfer_moves_money_and_returns_only_the_senders_balance`, `Transfer_debits_the_signed_in_users_wallet`, `Naming_a_source_wallet_is_rejected`, `Customer_without_a_wallet_cannot_transfer`, **`Parallel_transfers_from_one_wallet_never_overdraw_or_double_spend`** (200 requests), `Opposing_transfers_between_two_wallets_do_not_deadlock_and_conserve_money`, `Many_senders_into_one_wallet_all_land`, unit `Wallets_are_locked_in_ascending_id_order_regardless_of_direction`, `Transfer_always_debits_the_callers_own_wallet` |
 | R5 Idempotency | `Replayed_transfer_returns_the_same_receipt_and_moves_nothing`, `Reusing_a_key_with_a_different_payload_is_rejected`, **`Concurrent_retries_with_the_same_idempotency_key_move_money_exactly_once`**, `Rejected_transfer_replays_the_same_error_even_after_a_top_up`, `Idempotency_keys_are_scoped_per_customer`, `Transfer_without_idempotency_key_is_rejected` |
 | R6 Statement | `Statement_is_paginated_newest_first_without_gaps_or_duplicates`, `Statement_rejects_bad_paging_parameters` |
 | R7 Daily limit | `Daily_limit_resets_at_midnight_west_africa_time`, **`Concurrent_transfers_cannot_exceed_the_daily_limit`**, unit `DailyLimitPolicyTests`, `Daily_limit_counts_earlier_transfers_and_resets_at_wat_midnight` |

@@ -15,7 +15,9 @@ public sealed class TransferService(
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     /// <summary>
-    /// Moves money between two wallets in one database transaction:
+    /// Moves money from the caller's own wallet to another wallet in one database transaction. The source is
+    /// resolved from the authenticated user, never from the request, so nobody can name someone else's wallet.
+    /// Steps:
     /// <list type="number">
     /// <item>Claim the idempotency key (a concurrent duplicate blocks here until the first request commits).</item>
     /// <item>Lock both wallet rows in a fixed order (prevents A→B / B→A deadlocks).</item>
@@ -30,11 +32,14 @@ public sealed class TransferService(
         var key = RequestGuard.IdempotencyKey(idempotencyKey);
         var amount = guard.Amount(command.AmountKobo);
         var narration = RequestGuard.Narration(command.Narration);
-        if (command.SourceWalletId == command.DestinationWalletId)
+
+        var sourceWalletId = await store.FindWalletIdByCustomerAsync(actor.SubjectId, ct)
+                             ?? throw new WalletNotFoundException("You don't have a wallet yet. Create one first.");
+        if (sourceWalletId == command.DestinationWalletId)
             throw new SameWalletTransferException();
 
-        var requestHash = RequestGuard.HashRequest(
-            "transfer", command.SourceWalletId, command.DestinationWalletId, amount.Kobo, narration);
+        // The key is scoped to the caller, and the caller has one wallet, so the source needn't be hashed.
+        var requestHash = RequestGuard.HashRequest("transfer", command.DestinationWalletId, amount.Kobo, narration);
 
         await using var tx = await store.BeginAsync(ct);
         var now = timeProvider.GetLedgerNow();
@@ -45,7 +50,7 @@ public sealed class TransferService(
 
         try
         {
-            var receipt = await ExecuteAsync(actor, command, amount, narration, correlationId, now, ct);
+            var receipt = await ExecuteAsync(actor, sourceWalletId, command, amount, narration, correlationId, now, ct);
 
             await store.SaveChangesAsync(ct);
             await store.CompleteIdempotencyKeyAsync(actor.SubjectId, key, IdempotencyOutcome.Succeeded,
@@ -54,7 +59,7 @@ public sealed class TransferService(
 
             logger.LogInformation(
                 "Transfer {TransactionId} of {AmountKobo} kobo from {SourceWalletId} to {DestinationWalletId} completed",
-                receipt.TransactionId, amount.Kobo, command.SourceWalletId, command.DestinationWalletId);
+                receipt.TransactionId, amount.Kobo, sourceWalletId, command.DestinationWalletId);
             return new IdempotentResult<TransactionReceipt>(receipt, Replayed: false);
         }
         catch (DomainException ex)
@@ -66,28 +71,28 @@ public sealed class TransferService(
                 null, ex.Code, ex.Message, now, ct);
             await tx.CommitAsync(ct);
 
-            logger.LogInformation("Transfer from {SourceWalletId} rejected: {ErrorCode}", command.SourceWalletId, ex.Code);
+            logger.LogInformation("Transfer from {SourceWalletId} rejected: {ErrorCode}", sourceWalletId, ex.Code);
             throw;
         }
     }
 
     private async Task<TransactionReceipt> ExecuteAsync(
-        Actor actor, TransferCommand command, Money amount, string? narration, string? correlationId,
+        Actor actor, Guid sourceWalletId, TransferCommand command, Money amount, string? narration, string? correlationId,
         DateTimeOffset now, CancellationToken ct)
     {
         // Always lock the lower id first so two opposing transfers can never wait on each other.
-        var (firstId, secondId) = command.SourceWalletId.CompareTo(command.DestinationWalletId) < 0
-            ? (command.SourceWalletId, command.DestinationWalletId)
-            : (command.DestinationWalletId, command.SourceWalletId);
+        var (firstId, secondId) = sourceWalletId.CompareTo(command.DestinationWalletId) < 0
+            ? (sourceWalletId, command.DestinationWalletId)
+            : (command.DestinationWalletId, sourceWalletId);
         var first = await store.LockWalletAsync(firstId, ct);
         var second = await store.LockWalletAsync(secondId, ct);
 
-        var source = firstId == command.SourceWalletId ? first : second;
-        var destination = firstId == command.SourceWalletId ? second : first;
+        var source = firstId == sourceWalletId ? first : second;
+        var destination = firstId == sourceWalletId ? second : first;
 
-        // A wallet the caller doesn't own is reported as not found, so wallet ids can't be probed.
+        // Defence in depth: the source was looked up by owner, so this should never fire.
         if (source is null || !source.IsOwnedBy(actor.SubjectId))
-            throw new WalletNotFoundException(command.SourceWalletId);
+            throw new WalletNotFoundException(sourceWalletId);
         if (destination is null)
             throw new WalletNotFoundException(command.DestinationWalletId);
 

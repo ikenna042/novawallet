@@ -133,7 +133,7 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         var (alice, aliceWallet) = await NewCustomerAsync(10_000_00);
         var (bob, bobWallet) = await NewCustomerAsync();
 
-        var response = await alice.TransferAsync(aliceWallet, bobWallet, 2_500_50, Guid.NewGuid().ToString(), "Rent");
+        var response = await alice.TransferAsync(bobWallet, 2_500_50, Guid.NewGuid().ToString(), "Rent");
         await response.EnsureStatusAsync(HttpStatusCode.Created);
         Assert.Equal("false", response.Headers.GetValues("Idempotent-Replayed").Single());
 
@@ -151,8 +151,8 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         var (_, bobWallet) = await NewCustomerAsync();
         var key = Guid.NewGuid().ToString();
 
-        var first = await alice.TransferAsync(aliceWallet, bobWallet, 1_000_00, key);
-        var replay = await alice.TransferAsync(aliceWallet, bobWallet, 1_000_00, key);
+        var first = await alice.TransferAsync(bobWallet, 1_000_00, key);
+        var replay = await alice.TransferAsync(bobWallet, 1_000_00, key);
 
         await replay.EnsureStatusAsync(HttpStatusCode.Created);
         Assert.Equal("true", replay.Headers.GetValues("Idempotent-Replayed").Single());
@@ -167,8 +167,8 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         var (_, bobWallet) = await NewCustomerAsync();
         var key = Guid.NewGuid().ToString();
 
-        await (await alice.TransferAsync(aliceWallet, bobWallet, 1_000_00, key)).EnsureStatusAsync(HttpStatusCode.Created);
-        var reused = await alice.TransferAsync(aliceWallet, bobWallet, 9_000_00, key);
+        await (await alice.TransferAsync(bobWallet, 1_000_00, key)).EnsureStatusAsync(HttpStatusCode.Created);
+        var reused = await alice.TransferAsync(bobWallet, 9_000_00, key);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, reused.StatusCode);
         Assert.Equal("idempotency_key_reused", (await reused.ReadProblemAsync()).Code);
@@ -182,11 +182,11 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         var (_, bobWallet) = await NewCustomerAsync();
         var key = Guid.NewGuid().ToString();
 
-        var first = await alice.TransferAsync(aliceWallet, bobWallet, 5_00, key);
+        var first = await alice.TransferAsync(bobWallet, 5_00, key);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, first.StatusCode);
 
         await (await Admin.CreditAsync(aliceWallet, 100_00)).EnsureStatusAsync(HttpStatusCode.Created);
-        var retry = await alice.TransferAsync(aliceWallet, bobWallet, 5_00, key);
+        var retry = await alice.TransferAsync(bobWallet, 5_00, key);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, retry.StatusCode);
         Assert.Equal("insufficient_funds", (await retry.ReadProblemAsync()).Code);
@@ -200,8 +200,8 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         var (bob, bobWallet) = await NewCustomerAsync(1_000_00);
         var sharedKey = Guid.NewGuid().ToString();
 
-        await (await alice.TransferAsync(aliceWallet, bobWallet, 1_00, sharedKey)).EnsureStatusAsync(HttpStatusCode.Created);
-        var bobs = await bob.TransferAsync(bobWallet, aliceWallet, 1_00, sharedKey);
+        await (await alice.TransferAsync(bobWallet, 1_00, sharedKey)).EnsureStatusAsync(HttpStatusCode.Created);
+        var bobs = await bob.TransferAsync(aliceWallet, 1_00, sharedKey);
 
         await bobs.EnsureStatusAsync(HttpStatusCode.Created);
         Assert.Equal("false", bobs.Headers.GetValues("Idempotent-Replayed").Single());
@@ -213,30 +213,66 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         var (alice, aliceWallet) = await NewCustomerAsync(1_000_00);
         var (_, bobWallet) = await NewCustomerAsync();
 
-        var response = await alice.TransferAsync(aliceWallet, bobWallet, 1_00, idempotencyKey: null);
+        var response = await alice.TransferAsync(bobWallet, 1_00, idempotencyKey: null);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("validation_error", (await response.ReadProblemAsync()).Code);
     }
 
     [Fact]
-    public async Task Customer_cannot_transfer_out_of_someone_elses_wallet()
+    public async Task Naming_a_source_wallet_is_rejected()
     {
-        var (_, aliceWallet) = await NewCustomerAsync(1_000_00);
+        // The source always comes from the signed-in user; a request can't even name one.
+        var (alice, aliceWallet) = await NewCustomerAsync(1_000_00);
         var (mallory, malloryWallet) = await NewCustomerAsync();
 
-        var response = await mallory.TransferAsync(aliceWallet, malloryWallet, 1_000_00, Guid.NewGuid().ToString());
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/transfers")
+        {
+            Content = JsonContent.Create(new { sourceWalletId = aliceWallet, destinationWalletId = malloryWallet, amountKobo = 1_000_00 }),
+        };
+        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        var response = await mallory.Http.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(1_000_00, await alice.GetBalanceAsync(aliceWallet));
         Assert.Equal(0, await mallory.GetBalanceAsync(malloryWallet));
     }
 
+    [Fact]
+    public async Task Transfer_debits_the_signed_in_users_wallet()
+    {
+        var (alice, aliceWallet) = await NewCustomerAsync(1_000_00);
+        var (bob, bobWallet) = await NewCustomerAsync(1_000_00);
+
+        var response = await bob.TransferAsync(aliceWallet, 300_00, Guid.NewGuid().ToString());
+        await response.EnsureStatusAsync(HttpStatusCode.Created);
+        var receipt = (await response.Content.ReadFromJsonAsync<TransactionReceipt>())!;
+
+        Assert.Equal(bobWallet, receipt.SourceWalletId);
+        Assert.Equal(700_00, await bob.GetBalanceAsync(bobWallet));
+        Assert.Equal(1_300_00, await alice.GetBalanceAsync(aliceWallet));
+    }
+
+    [Fact]
+    public async Task Customer_without_a_wallet_cannot_transfer()
+    {
+        var (_, someWallet) = await NewCustomerAsync();
+        var walletless = await LedgerClient.CustomerAsync(fixture.Factory);
+
+        var response = await walletless.TransferAsync(someWallet, 1_00, Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var problem = await response.ReadProblemAsync();
+        Assert.Equal("wallet_not_found", problem.Code);
+        Assert.Contains("don't have a wallet", problem.Detail);
+    }
+
     [Theory]
-    [InlineData("""{"sourceWalletId":"{src}","destinationWalletId":"{dst}","amountKobo":100.5}""")]
-    [InlineData("""{"sourceWalletId":"{src}","destinationWalletId":"{dst}","amountKobo":"100"}""")]
-    [InlineData("""{"sourceWalletId":"{src}","destinationWalletId":"{dst}","amountKobo":-100}""")]
-    [InlineData("""{"sourceWalletId":"{src}","destinationWalletId":"{dst}","amountKobo":0}""")]
-    [InlineData("""{"sourceWalletId":"{src}","destinationWalletId":"{dst}","amount":100}""")]
-    [InlineData("""{"sourceWalletId":"{src}","destinationWalletId":"{src}","amountKobo":100}""")]
-    [InlineData("""{"sourceWalletId":"{src}","destinationWalletId":"{dst}","amountKobo":9223372036854775807}""")]
+    [InlineData("""{"destinationWalletId":"{dst}","amountKobo":100.5}""")]
+    [InlineData("""{"destinationWalletId":"{dst}","amountKobo":"100"}""")]
+    [InlineData("""{"destinationWalletId":"{dst}","amountKobo":-100}""")]
+    [InlineData("""{"destinationWalletId":"{dst}","amountKobo":0}""")]
+    [InlineData("""{"destinationWalletId":"{dst}","amount":100}""")]
+    [InlineData("""{"destinationWalletId":"{src}","amountKobo":100}""")]
+    [InlineData("""{"destinationWalletId":"{dst}","amountKobo":9223372036854775807}""")]
     public async Task Malformed_transfer_requests_are_rejected_with_problem_details(string body)
     {
         var (alice, aliceWallet) = await NewCustomerAsync(1_000_00);
@@ -266,15 +302,15 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         var (alice, aliceWallet) = await NewCustomerAsync(1_000_000_00, timed, authFactory: fixture.Factory);
         var (_, bobWallet) = await NewCustomerAsync(0, timed, authFactory: fixture.Factory);
 
-        await (await alice.TransferAsync(aliceWallet, bobWallet, 500_000_00, Guid.NewGuid().ToString()))
+        await (await alice.TransferAsync(bobWallet, 500_000_00, Guid.NewGuid().ToString()))
             .EnsureStatusAsync(HttpStatusCode.Created);
 
         clock.SetUtcNow(new DateTimeOffset(2026, 9, 16, 22, 59, 59, TimeSpan.Zero)); // 23:59:59 WAT
-        var sameDay = await alice.TransferAsync(aliceWallet, bobWallet, 1, Guid.NewGuid().ToString());
+        var sameDay = await alice.TransferAsync(bobWallet, 1, Guid.NewGuid().ToString());
         Assert.Equal("daily_limit_exceeded", (await sameDay.ReadProblemAsync()).Code);
 
         clock.SetUtcNow(new DateTimeOffset(2026, 9, 16, 23, 0, 0, TimeSpan.Zero)); // 00:00 WAT next day
-        await (await alice.TransferAsync(aliceWallet, bobWallet, 500_000_00, Guid.NewGuid().ToString()))
+        await (await alice.TransferAsync(bobWallet, 500_000_00, Guid.NewGuid().ToString()))
             .EnsureStatusAsync(HttpStatusCode.Created);
     }
 
@@ -324,7 +360,7 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
 
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/transfers")
         {
-            Content = JsonContent.Create(new { sourceWalletId = aliceWallet, destinationWalletId = bobWallet, amountKobo = 400_00 }),
+            Content = JsonContent.Create(new { destinationWalletId = bobWallet, amountKobo = 400_00 }),
         };
         request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
         request.Headers.Add("X-Correlation-ID", "test-correlation-0001");
@@ -382,7 +418,7 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
     {
         var (alice, aliceWallet) = await NewCustomerAsync(1_000_00);
         var (_, bobWallet) = await NewCustomerAsync();
-        var response = await alice.TransferAsync(aliceWallet, bobWallet, 1_00, Guid.NewGuid().ToString());
+        var response = await alice.TransferAsync(bobWallet, 1_00, Guid.NewGuid().ToString());
         var receipt = (await response.Content.ReadFromJsonAsync<TransactionReceipt>())!;
 
         await using var db = await fixture.OpenConnectionAsync();
@@ -451,16 +487,16 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         var (bob, bobWallet) = await NewCustomerAsync(1_000_00, limited);
 
         for (var i = 0; i < 3; i++)
-            await (await alice.TransferAsync(aliceWallet, bobWallet, 1_00, Guid.NewGuid().ToString()))
+            await (await alice.TransferAsync(bobWallet, 1_00, Guid.NewGuid().ToString()))
                 .EnsureStatusAsync(HttpStatusCode.Created);
 
-        var throttled = await alice.TransferAsync(aliceWallet, bobWallet, 1_00, Guid.NewGuid().ToString());
+        var throttled = await alice.TransferAsync(bobWallet, 1_00, Guid.NewGuid().ToString());
         Assert.Equal(HttpStatusCode.TooManyRequests, throttled.StatusCode);
         Assert.Equal("rate_limited", (await throttled.ReadProblemAsync()).Code);
         Assert.True(throttled.Headers.Contains("Retry-After"));
 
         // Another customer has their own budget.
-        await (await bob.TransferAsync(bobWallet, aliceWallet, 1_00, Guid.NewGuid().ToString()))
+        await (await bob.TransferAsync(aliceWallet, 1_00, Guid.NewGuid().ToString()))
             .EnsureStatusAsync(HttpStatusCode.Created);
     }
 

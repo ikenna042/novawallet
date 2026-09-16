@@ -45,6 +45,9 @@ internal sealed class FakeLedgerStore : ILedgerStore
     public Task<Wallet?> FindWalletAsync(Guid walletId, CancellationToken ct) =>
         Task.FromResult(Wallets.GetValueOrDefault(walletId));
 
+    public Task<Guid?> FindWalletIdByCustomerAsync(string customerId, CancellationToken ct) =>
+        Task.FromResult(Wallets.Values.FirstOrDefault(w => w.CustomerId == customerId)?.Id);
+
     public Task<bool> TryCreateWalletAsync(Wallet wallet, CancellationToken ct)
     {
         if (Wallets.Values.Any(w => w.CustomerId == wallet.CustomerId))
