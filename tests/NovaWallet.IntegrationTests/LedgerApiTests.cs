@@ -16,16 +16,21 @@ namespace NovaWallet.IntegrationTests;
 [Collection(LedgerCollection.Name)]
 public sealed class LedgerApiTests(LedgerApiFixture fixture)
 {
-    private readonly LedgerClient _operator = LedgerClient.Create(fixture.Factory, Roles.Operator);
+    private LedgerClient Admin => fixture.Admin;
 
-    private async Task<(LedgerClient Client, Guid WalletId)> NewCustomerAsync(long balanceKobo = 0, WebApplicationFactory<Program>? factory = null)
+    /// <param name="factory">Host to talk to (defaults to the shared one).</param>
+    /// <param name="authFactory">Host to sign in through, when <paramref name="factory"/> runs on a fake clock.</param>
+    private async Task<(LedgerClient Client, Guid WalletId)> NewCustomerAsync(
+        long balanceKobo = 0, WebApplicationFactory<Program>? factory = null, WebApplicationFactory<Program>? authFactory = null)
     {
         factory ??= fixture.Factory;
-        var client = LedgerClient.Create(factory);
+        var client = await LedgerClient.CustomerAsync(factory, authFactory);
         var wallet = await client.CreateWalletAsync();
         if (balanceKobo > 0)
-            await (await LedgerClient.Create(factory, Roles.Operator).CreditAsync(wallet.WalletId, balanceKobo))
-                .EnsureStatusAsync(HttpStatusCode.Created);
+        {
+            var admin = ReferenceEquals(factory, fixture.Factory) ? Admin : await LedgerClient.AdminAsync(factory, authFactory);
+            await (await admin.CreditAsync(wallet.WalletId, balanceKobo)).EnsureStatusAsync(HttpStatusCode.Created);
+        }
         return (client, wallet.WalletId);
     }
 
@@ -34,7 +39,7 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
     [Fact]
     public async Task New_wallet_has_zero_ngn_balance()
     {
-        var client = LedgerClient.Create(fixture.Factory);
+        var client = await LedgerClient.CustomerAsync(fixture.Factory);
         var response = await client.Http.PostAsJsonAsync("/api/v1/wallets", new { });
 
         await response.EnsureStatusAsync(HttpStatusCode.Created);
@@ -58,21 +63,28 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
     }
 
     [Fact]
-    public async Task Customer_cannot_create_a_wallet_for_someone_else_but_operator_can()
+    public async Task Customer_cannot_create_a_wallet_for_someone_else_but_admin_can()
     {
-        var customer = LedgerClient.Create(fixture.Factory);
-        var denied = await customer.Http.PostAsJsonAsync("/api/v1/wallets", new { customerId = "someone-else" });
+        var customer = await LedgerClient.CustomerAsync(fixture.Factory);
+        var other = await LedgerClient.CustomerAsync(fixture.Factory);
+
+        var denied = await customer.Http.PostAsJsonAsync("/api/v1/wallets", new { customerId = other.Subject });
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
 
-        var created = await _operator.Http.PostAsJsonAsync("/api/v1/wallets", new { customerId = $"cust-{Guid.NewGuid():N}" });
+        var created = await Admin.Http.PostAsJsonAsync("/api/v1/wallets", new { customerId = other.Subject });
         await created.EnsureStatusAsync(HttpStatusCode.Created);
+        Assert.Equal(other.Subject, (await created.Content.ReadFromJsonAsync<WalletResponse>())!.CustomerId);
+
+        // Wallets can only belong to registered users.
+        var unknown = await Admin.Http.PostAsJsonAsync("/api/v1/wallets", new { customerId = Guid.NewGuid().ToString("N") });
+        Assert.Equal(HttpStatusCode.BadRequest, unknown.StatusCode);
     }
 
     [Fact]
     public async Task Customer_cannot_see_another_customers_wallet()
     {
         var (_, aliceWallet) = await NewCustomerAsync(1_000_00);
-        var mallory = LedgerClient.Create(fixture.Factory);
+        var mallory = await LedgerClient.CustomerAsync(fixture.Factory);
 
         foreach (var path in new[] { "balance", "statement" })
         {
@@ -98,8 +110,8 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         var (client, wallet) = await NewCustomerAsync();
         var reference = $"NIP{Guid.NewGuid():N}";
 
-        var first = await _operator.CreditAsync(wallet, 5_000_00, reference);
-        var second = await _operator.CreditAsync(wallet, 5_000_00, reference);
+        var first = await Admin.CreditAsync(wallet, 5_000_00, reference);
+        var second = await Admin.CreditAsync(wallet, 5_000_00, reference);
         await first.EnsureStatusAsync(HttpStatusCode.Created);
         await second.EnsureStatusAsync(HttpStatusCode.Created);
         Assert.Equal("true", second.Headers.GetValues("Idempotent-Replayed").Single());
@@ -108,7 +120,7 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
             (await second.Content.ReadFromJsonAsync<TransactionReceipt>())!.TransactionId);
         Assert.Equal(5_000_00, await client.GetBalanceAsync(wallet));
 
-        var different = await _operator.CreditAsync(wallet, 1_00, reference);
+        var different = await Admin.CreditAsync(wallet, 1_00, reference);
         Assert.Equal(HttpStatusCode.Conflict, different.StatusCode);
         Assert.Equal("duplicate_reference", (await different.ReadProblemAsync()).Code);
     }
@@ -173,7 +185,7 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         var first = await alice.TransferAsync(aliceWallet, bobWallet, 5_00, key);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, first.StatusCode);
 
-        await (await _operator.CreditAsync(aliceWallet, 100_00)).EnsureStatusAsync(HttpStatusCode.Created);
+        await (await Admin.CreditAsync(aliceWallet, 100_00)).EnsureStatusAsync(HttpStatusCode.Created);
         var retry = await alice.TransferAsync(aliceWallet, bobWallet, 5_00, key);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, retry.StatusCode);
@@ -250,8 +262,9 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         await using var timed = fixture.Factory.WithWebHostBuilder(b =>
             b.ConfigureTestServices(s => s.AddSingleton<TimeProvider>(clock)));
 
-        var (alice, aliceWallet) = await NewCustomerAsync(1_000_000_00, timed);
-        var (_, bobWallet) = await NewCustomerAsync(0, timed);
+        // Tokens come from the real-clock host; the ledger under test runs on the fake clock.
+        var (alice, aliceWallet) = await NewCustomerAsync(1_000_000_00, timed, authFactory: fixture.Factory);
+        var (_, bobWallet) = await NewCustomerAsync(0, timed, authFactory: fixture.Factory);
 
         await (await alice.TransferAsync(aliceWallet, bobWallet, 500_000_00, Guid.NewGuid().ToString()))
             .EnsureStatusAsync(HttpStatusCode.Created);
@@ -272,7 +285,7 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
     {
         var (client, wallet) = await NewCustomerAsync();
         for (var i = 1; i <= 25; i++)
-            await (await _operator.CreditAsync(wallet, i)).EnsureStatusAsync(HttpStatusCode.Created);
+            await (await Admin.CreditAsync(wallet, i)).EnsureStatusAsync(HttpStatusCode.Created);
 
         var amounts = new List<long>();
         string? cursor = null;
@@ -319,7 +332,7 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         await response.EnsureStatusAsync(HttpStatusCode.Created);
         Assert.Equal("test-correlation-0001", response.Headers.GetValues("X-Correlation-ID").Single());
 
-        var trail = (await _operator.Http.GetFromJsonAsync<AuditTrailResponse>($"/api/v1/wallets/{aliceWallet}/audit"))!;
+        var trail = (await Admin.Http.GetFromJsonAsync<AuditTrailResponse>($"/api/v1/wallets/{aliceWallet}/audit"))!;
         Assert.True(trail.ChainIntact);
         Assert.Collection(trail.Records,
             credit => Assert.Equal(("CREDIT", 0L, 1_000_00L), (credit.Action, credit.BalanceBeforeKobo, credit.BalanceAfterKobo)),
@@ -396,15 +409,14 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         Assert.Equal(HttpStatusCode.Unauthorized, noToken.StatusCode);
         Assert.Equal("application/problem+json", noToken.Content.Headers.ContentType?.MediaType);
 
-        var issuer = new DevTokenIssuer(
-            Microsoft.Extensions.Options.Options.Create(new JwtOptions { SigningKey = "a-completely-different-signing-key-9876543210" }),
-            TimeProvider.System);
+        // A forger who knows the admin's user id but not the signing key.
+        var forger = Issuer(signingKey: "a-completely-different-signing-key-9876543210", TimeProvider.System);
         foreach (var token in new[]
                  {
-                     issuer.Issue("attacker", Roles.Operator, TimeSpan.FromMinutes(5)), // wrong key
+                     forger.Issue(Admin.Subject, Roles.Admin, 1, TimeSpan.FromMinutes(5)).Token, // wrong key
                      "not-a-jwt",
-                     // alg=none token claiming operator
-                     "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ4Iiwicm9sZSI6Im9wZXJhdG9yIn0.",
+                     // alg=none token claiming admin
+                     "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ4Iiwicm9sZSI6ImFkbWluIiwidmVyIjoiMSJ9.",
                  })
         {
             var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/wallets/{Guid.NewGuid()}/balance");
@@ -416,12 +428,12 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
     [Fact]
     public async Task Expired_tokens_are_rejected()
     {
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow.AddHours(-2));
-        var issuer = new DevTokenIssuer(
-            Microsoft.Extensions.Options.Options.Create(new JwtOptions { SigningKey = LedgerApiFixture.SigningKey }), clock);
+        var customer = await LedgerClient.CustomerAsync(fixture.Factory);
+        // Correct key, real user, current version, but issued two hours ago with a five-minute lifetime.
+        var issuer = Issuer(LedgerApiFixture.SigningKey, new FakeTimeProvider(DateTimeOffset.UtcNow.AddHours(-2)));
         var http = fixture.Factory.CreateClient();
-        http.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", issuer.Issue("late-customer", Roles.Customer, TimeSpan.FromMinutes(5)));
+        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer",
+            issuer.Issue(customer.Subject, Roles.Customer, 1, TimeSpan.FromMinutes(5)).Token);
 
         var response = await http.PostAsJsonAsync("/api/v1/wallets", new { });
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -462,18 +474,8 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
         await response.EnsureStatusAsync(HttpStatusCode.OK);
     }
 
-    [Fact]
-    public async Task Dev_token_endpoint_issues_usable_tokens_and_validates_input()
-    {
-        var http = fixture.Factory.CreateClient();
-        var bad = await http.PostAsJsonAsync("/dev/token", new { subject = "x", role = "admin" });
-        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
-
-        var ok = await http.PostAsJsonAsync("/dev/token", new { subject = $"cust-{Guid.NewGuid():N}" });
-        await ok.EnsureStatusAsync(HttpStatusCode.OK);
-        var token = (await ok.Content.ReadFromJsonAsync<DevTokenEndpoint.DevTokenResponse>())!;
-
-        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
-        await (await http.PostAsJsonAsync("/api/v1/wallets", new { })).EnsureStatusAsync(HttpStatusCode.Created);
-    }
+    private static JwtTokenIssuer Issuer(string signingKey, TimeProvider clock) => new(
+        Microsoft.Extensions.Options.Options.Create(new JwtOptions { SigningKey = signingKey }),
+        Microsoft.Extensions.Options.Options.Create(new AuthOptions()),
+        clock);
 }

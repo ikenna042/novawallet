@@ -2,28 +2,69 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
-using NovaWallet.Api.Auth;
 using NovaWallet.Application;
 
 namespace NovaWallet.IntegrationTests.Infrastructure;
 
-/// <summary>Thin typed wrapper over the HTTP API, authenticated as one subject.</summary>
-public sealed class LedgerClient(HttpClient http, string subject)
+/// <summary>Thin typed wrapper over the HTTP API, signed in as one user through the real auth endpoints.</summary>
+public sealed class LedgerClient
 {
-    public string Subject { get; } = subject;
-    public HttpClient Http { get; } = http;
+    public const string DefaultPassword = "Correct-Horse-Battery-42";
 
-    public static LedgerClient Create(WebApplicationFactory<Program> factory, string role = Roles.Customer, string? subject = null)
+    private LedgerClient(HttpClient http, AuthTokens tokens)
     {
-        subject ??= $"{role}-{Guid.NewGuid():N}";
-        // Always sign with the real clock, even when the host under test runs on a fake TimeProvider.
-        var issuer = new DevTokenIssuer(factory.Services.GetRequiredService<IOptions<JwtOptions>>(), TimeProvider.System);
-        var token = issuer.Issue(subject, role, TimeSpan.FromMinutes(30));
+        Http = http;
+        Tokens = tokens;
+    }
+
+    public HttpClient Http { get; }
+    public AuthTokens Tokens { get; }
+    public Guid UserId => Tokens.User.UserId;
+    public string Email => Tokens.User.Email;
+
+    /// <summary>The JWT subject, which is also the wallet's customer id.</summary>
+    public string Subject => UserId.ToString("N");
+
+    public static string NewEmail(string prefix = "user") => $"{prefix}-{Guid.NewGuid():N}@example.test";
+
+    /// <summary>
+    /// Registers a new customer and signs in. <paramref name="authFactory"/> lets a test that runs the API on a
+    /// fake clock obtain tokens from a host on the real clock.
+    /// </summary>
+    public static async Task<LedgerClient> CustomerAsync(
+        WebApplicationFactory<Program> factory, WebApplicationFactory<Program>? authFactory = null, string? email = null)
+    {
+        email ??= NewEmail();
+        var anonymous = (authFactory ?? factory).CreateClient();
+        await (await anonymous.PostAsJsonAsync("/api/v1/auth/register", new { email, password = DefaultPassword }))
+            .EnsureStatusAsync(HttpStatusCode.Created);
+        return await LoginAsync(factory, email, DefaultPassword, authFactory);
+    }
+
+    public static async Task<LedgerClient> AdminAsync(
+        WebApplicationFactory<Program> factory, WebApplicationFactory<Program>? authFactory = null) =>
+        await LoginAsync(factory, LedgerApiFixture.AdminEmail, LedgerApiFixture.AdminPassword, authFactory);
+
+    public static async Task<LedgerClient> LoginAsync(
+        WebApplicationFactory<Program> factory, string email, string password,
+        WebApplicationFactory<Program>? authFactory = null)
+    {
+        var tokens = await LoginTokensAsync((authFactory ?? factory).CreateClient(), email, password);
+        return For(factory, tokens);
+    }
+
+    public static async Task<AuthTokens> LoginTokensAsync(HttpClient anonymous, string email, string password)
+    {
+        var response = await anonymous.PostAsJsonAsync("/api/v1/auth/login", new { email, password });
+        await response.EnsureStatusAsync(HttpStatusCode.OK);
+        return (await response.Content.ReadFromJsonAsync<AuthTokens>())!;
+    }
+
+    public static LedgerClient For(WebApplicationFactory<Program> factory, AuthTokens tokens)
+    {
         var http = factory.CreateClient();
-        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        return new LedgerClient(http, subject);
+        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        return new LedgerClient(http, tokens);
     }
 
     public async Task<WalletResponse> CreateWalletAsync()

@@ -138,7 +138,7 @@ async function icon(Comp, color, size = 256) {
     header(s, "Outcome", "What was delivered — and verified");
     const stats = [
       ["200 → 10", "parallel ₦100 transfers from a ₦1,000 wallet: exactly 10 succeed, 190 refused"],
-      ["91", "automated tests: 45 unit + 46 against real PostgreSQL, all green"],
+      ["148", "automated tests: 74 unit + 74 against real PostgreSQL, all green"],
       ["0", "negative balances or deadlocks across repeated load runs"],
       ["1", "command to run it: docker compose up (a CI job runs exactly that)"],
     ];
@@ -150,10 +150,10 @@ async function icon(Comp, color, size = 256) {
     });
     text(s, [
       { text: "Also shipped: ", options: { bold: true, color: C.navy } },
-      { text: "Swagger/OpenAPI · rate limiting · transactional outbox (TransferCompleted) · Serilog correlation IDs · health/readiness probes · hash-chained audit trail · GitHub Actions CI with a compose smoke test · README + AI_USAGE.md" },
+      { text: "password sign-in with rotating refresh tokens · admin API (users, freezes, action log) · Swagger/OpenAPI · rate limiting · transactional outbox · Serilog correlation IDs · health probes · hash-chained audit trail · CI with a compose smoke test · README, testing guide, AI_USAGE.md" },
     ], { x: 0.5, y: 4.1, w: 9, h: 0.8, fontSize: 12.5, color: C.ink });
     footer(s, 3);
-    s.addNotes("The headline: 200 transfers fired at the same instant against a thousand-naira wallet — exactly ten succeed, every time, balance lands on zero, and the ledger agrees. 91 tests in total, 46 of them against real Postgres. All four stretch goals are in as well.");
+    s.addNotes("The headline: 200 transfers fired at the same instant against a thousand-naira wallet — exactly ten succeed, every time, balance lands on zero, and the ledger agrees. 148 tests in total, half of them against real Postgres. All four stretch goals are in, plus real sign-in and an admin flow.");
   }
 
   // ---------- 4. Architecture ----------
@@ -163,8 +163,8 @@ async function icon(Comp, color, size = 256) {
     header(s, "Architecture", "Clean layers; the database is the last guard");
     const layers = [
       ["NovaWallet.Api", "Controllers · JWT · Problem Details · rate limiter · correlation ID · Swagger · health", I.code],
-      ["NovaWallet.Application", "TransferService · WalletService · DailyLimitPolicy · ILedgerStore port", I.layers],
-      ["NovaWallet.Infrastructure", "EF Core + raw SQL row locks · migrations · outbox worker", I.db],
+      ["NovaWallet.Application", "TransferService · WalletService · AuthService · AdminService · ports", I.layers],
+      ["NovaWallet.Infrastructure", "EF Core + raw SQL row locks · PBKDF2 hasher · admin seeder · outbox", I.db],
     ];
     layers.forEach(([t, d, img], i) => {
       const y = 1.45 + i * 1.05;
@@ -178,7 +178,7 @@ async function icon(Comp, color, size = 256) {
     card(s, 0.5, 4.6, 5.3, 0.5, C.navy);
     text(s, [
       { text: "NovaWallet.Domain  ", options: { bold: true, color: C.gold } },
-      { text: "Money (long kobo, checked) · Wallet · LedgerEntry · AuditRecord", options: { color: C.white } },
+      { text: "Money (long kobo, checked) · Wallet · LedgerEntry · AuditRecord · User", options: { color: C.white } },
     ], { x: 0.7, y: 4.6, w: 5.0, h: 0.5, fontSize: 11, valign: "middle" });
     // Postgres panel
     card(s, 6.2, 1.45, 3.3, 3.65, C.navy);
@@ -186,7 +186,7 @@ async function icon(Comp, color, size = 256) {
     text(s, "PostgreSQL 16", { x: 7.1, y: 1.72, w: 2.3, h: 0.35, fontSize: 15, bold: true, color: C.white });
     const guards = [
       "CHECK balance_kobo ≥ 0",
-      "Append-only triggers on ledger + audit",
+      "Append-only triggers on ledger, audit and admin log",
       "Unique (customer, idempotency key)",
       "Unique NIP reference",
       "Outbox in the same transaction",
@@ -299,16 +299,61 @@ async function icon(Comp, color, size = 256) {
     s.addNotes("The limit is derived from the ledger rather than a separate counter, and it's read while the sender is locked — so parallel transfers can't all squeeze under it. That's tested: 40 parallel twenty-thousand-naira transfers, exactly 25 pass. The audit trail is a separate table the database itself refuses to modify, and each wallet's records are hash-chained, so even someone who disables the trigger leaves evidence.");
   }
 
-  // ---------- 8. Security & context ----------
+  // ---------- 8. Sign-in & admin ----------
+  {
+    const s = pres.addSlide();
+    s.background = { color: C.white };
+    header(s, "Users & administration", "Real sign-in that can be revoked instantly");
+    card(s, 0.5, 1.45, 4.4, 3.65, C.navy);
+    text(s, "SESSION FLOW", { x: 0.7, y: 1.6, w: 4, h: 0.25, fontSize: 10, bold: true, color: C.gold, charSpacing: 2 });
+    const flow = [
+      ["Register", "always a customer; PBKDF2-SHA512 hash"],
+      ["Sign in", "15-min access JWT + 7-day refresh token"],
+      ["Refresh", "rotates; reusing an old one revokes the session"],
+      ["Every request", "user still active? role & token version match?"],
+    ];
+    flow.forEach(([t, d], i) => {
+      const y = 1.98 + i * 0.64;
+      s.addShape(pres.shapes.OVAL, { x: 0.7, y, w: 0.36, h: 0.36, fill: { color: C.gold }, line: { color: C.gold } });
+      text(s, String(i + 1), { x: 0.7, y, w: 0.36, h: 0.36, fontSize: 12, bold: true, color: C.navy, align: "center", valign: "middle" });
+      text(s, t, { x: 1.2, y: y - 0.02, w: 3.5, h: 0.24, fontSize: 12, bold: true, color: C.white });
+      text(s, d, { x: 1.2, y: y + 0.22, w: 3.55, h: 0.4, fontSize: 10, color: "C9D3E3" });
+    });
+    text(s, "Any failure → identical 401 · 5 wrong passwords → 15-min lock · sign-in rate-limited per IP",
+      { x: 0.7, y: 4.55, w: 4.05, h: 0.45, fontSize: 10, italic: true, color: C.gold });
+
+    const powers = [
+      [I.naira, "Credit & audit", "simulated NIP credits; hash-chained audit trail"],
+      [I.user, "Manage users", "disable → tokens die on the next request; promote / demote"],
+      [I.eye, "View any wallet", "find a user, see balance and statement"],
+      [I.lock, "Freeze wallet", "debit hold: sends refused, credits still land"],
+    ];
+    powers.forEach(([img, t, d], i) => {
+      const col = i % 2, row = Math.floor(i / 2);
+      const x = 5.15 + col * 2.2, y = 1.45 + row * 1.42;
+      card(s, x, y, 2.05, 1.3, C.card);
+      bubble(s, img, x + 0.12, y + 0.12, 0.42);
+      text(s, t, { x: x + 0.62, y: y + 0.12, w: 1.38, h: 0.42, fontSize: 11.5, bold: true, color: C.navy, valign: "middle" });
+      text(s, d, { x: x + 0.12, y: y + 0.62, w: 1.83, h: 0.64, fontSize: 9.5, color: C.ink });
+    });
+    card(s, 5.15, 4.35, 4.25, 0.75, C.goldSoft);
+    text(s, "Every admin action goes to an append-only log. No self-disable or self-demotion; the last admin can't be removed. First admin is seeded from config.",
+      { x: 5.3, y: 4.4, w: 3.95, h: 0.65, fontSize: 9.5, color: C.ink, valign: "middle" });
+    footer(s, 8);
+    s.addNotes("The brief allowed a mock token issuer, but I wanted a real flow. Customers register and sign in; passwords are PBKDF2-hashed. Access tokens live 15 minutes, refresh tokens rotate, and replaying an old refresh token revokes the whole session because that's what theft looks like. The key point for a bank: a JWT is normally valid until it expires, so on every request I check the user is still active and the token's version matches, so disabling someone takes effect on their very next call. Admins credit wallets, read audit trails, manage users and freeze wallets, all recorded in an append-only log. I proved the two critical safeguards the same way as the ledger: remove the per-request check and four tests fail; remove the row lock on refresh and ten concurrent refreshes all succeed.");
+  }
+
+  // ---------- 9. Security & context ----------
+
   {
     const s = pres.addSlide();
     s.background = { color: C.white };
     header(s, "Security & Nigerian context", "Built for where it would actually run");
     const tiles = [
-      [I.user, "Auth", "JWT: issuer, audience, lifetime checked; HS256 pinned (alg:none rejected); fallback policy = authenticated; operator role for credits & audit"],
+      [I.user, "Auth", "JWT signature, issuer, audience, expiry; HS256 pinned (alg:none rejected); user status + token version checked per request; admin role checked twice"],
       [I.eye, "No probing", "Other customers' wallets return 404; receipts show only the sender's balance"],
       [I.shield, "Input", "Strict JSON (100.5 or \"100\" refused), unknown fields rejected, safe-charset keys & IDs (no log injection)"],
-      [I.file, "NDPA 2023", "No BVN/NIN/names stored — opaque customer ID; request bodies never logged"],
+      [I.file, "NDPA 2023", "Only email, optional name and a password hash; no BVN/NIN; tokens carry no PII; bodies never logged"],
       [I.phone, "USSD & NIP", "Retries made harmless by idempotency; NIP session ID de-duplicates credits; gateway can pass X-Correlation-ID"],
       [I.gauge, "CBN & abuse", "Per-customer rate limit (429 + Retry-After); configurable daily limit; tiered-KYC limits are next"],
     ];
@@ -320,11 +365,11 @@ async function icon(Comp, color, size = 256) {
       text(s, t, { x: x + 0.72, y: y + 0.2, w: 2.0, h: 0.35, fontSize: 13, bold: true, color: C.navy, valign: "middle" });
       text(s, d, { x: x + 0.15, y: y + 0.72, w: 2.58, h: 0.95, fontSize: 10, color: C.ink });
     });
-    footer(s, 8);
-    s.addNotes("Security: the token check is strict and pinned to one algorithm, and there is a test that an alg-none operator token is refused. Secrets come from the environment; startup fails on a short key. The mock issuer only exists behind a flag. For NDPA, the ledger stores no personal identifiers and never logs bodies. The USSD channel is exactly why idempotency matters, and tiered KYC limits would plug into the same limit policy.");
+    footer(s, 9);
+    s.addNotes("Security: the token check is strict and pinned to one algorithm, and there is a test that an alg-none admin token is refused. Secrets come from the environment; startup fails on a short key. The mock issuer only exists behind a flag. For NDPA, the ledger stores no personal identifiers and never logs bodies. The USSD channel is exactly why idempotency matters, and tiered KYC limits would plug into the same limit policy.");
   }
 
-  // ---------- 9. Evidence ----------
+  // ---------- 10. Evidence ----------
   {
     const s = pres.addSlide();
     s.background = { color: C.white };
@@ -353,11 +398,11 @@ async function icon(Comp, color, size = 256) {
       text(s, t, { x: 6.45, y, w: 3.05, h: 0.3, fontSize: 12.5, bold: true, color: C.navy });
       text(s, d, { x: 6.45, y: y + 0.3, w: 3.05, h: 0.58, fontSize: 10.5, color: C.muted });
     });
-    footer(s, 9);
+    footer(s, 10);
     s.addNotes("A green test suite only means something if it goes red for the right reason. So I deleted FOR UPDATE and re-ran: 199 of 200 transfers 'succeeded' out of a thousand naira — classic lost updates — and four of five concurrency tests failed. Removing the lock ordering produced real Postgres deadlocks. Both were restored and the full suite is green.");
   }
 
-  // ---------- 10. AI usage ----------
+  // ---------- 11. AI usage ----------
   {
     const s = pres.addSlide();
     s.background = { color: C.white };
@@ -375,7 +420,7 @@ async function icon(Comp, color, size = 256) {
     const cases = [
       [I.bug, "Errors stopped being Problem Details", "[Produces(\"application/json\")] overrode 400 responses. Caught by a media-type assertion (5 of 7 cases failed). Removed."],
       [I.triangle, "Every declined transfer logged as an ERROR", ".NET 8 exception middleware logs all exceptions at Error — alert fatigue in a bank. Caught reading logs; fixed with an MVC filter → 0 error lines."],
-      [I.flask, "Tests that checked the wrong rule", "\"Insufficient funds\" tests used amounts above the daily limit, so the limit fired first. Rewritten to overdraw by exactly 1 kobo."],
+      [I.flask, "A smoke check that passed for the wrong reason", "Inline JSON in the AI's bash script was brace-expanded by macOS bash 3.2 into 3 failed requests, and the check compared two failures. Caught via request logs; bodies now built with jq."],
     ];
     cases.forEach(([img, t, d], i) => {
       const y = 1.45 + i * 1.22;
@@ -384,11 +429,11 @@ async function icon(Comp, color, size = 256) {
       text(s, t, { x: 4.3, y: y + 0.1, w: 5.1, h: 0.3, fontSize: 12.5, bold: true, color: C.navy });
       text(s, d, { x: 4.3, y: y + 0.42, w: 5.1, h: 0.62, fontSize: 10.5, color: C.ink });
     });
-    footer(s, 10);
-    s.addNotes("I used Claude Code as the implementer and treated myself as the reviewer. Three real misses: an innocent-looking Produces attribute that broke the Problem Details contract; business declines being logged as server errors, which in a bank means alert fatigue; and tests asserting insufficient funds with amounts that actually tripped the daily limit. Also caught before they bit: EF returning a stale tracked wallet after a lock, and timestamp precision breaking the audit hash chain. All of it is written up in AI_USAGE.md.");
+    footer(s, 11);
+    s.addNotes("I used Claude Code as the implementer and treated myself as the reviewer. Three real misses: an innocent-looking Produces attribute that broke the Problem Details contract; business declines being logged as server errors, which in a bank means alert fatigue; and a smoke-test check that passed for the wrong reason because macOS's old bash split an inline JSON body into three failed requests. Also: tests asserting insufficient funds with amounts that tripped the daily limit, and an error message leaking internal class names. Also caught before they bit: EF returning a stale tracked wallet after a lock, and timestamp precision breaking the audit hash chain. All of it is written up in AI_USAGE.md.");
   }
 
-  // ---------- 11. Trade-offs & close ----------
+  // ---------- 12. Trade-offs & close ----------
   {
     const s = pres.addSlide();
     s.background = { color: C.navy };
@@ -397,7 +442,7 @@ async function icon(Comp, color, size = 256) {
     const tradeoffs = [
       ["Row locks over optimistic retries", "simple, provable; serialises a hot wallet's writes"],
       ["Declines cached per key", "consistent replays; a top-up needs a new key"],
-      ["Migrate on startup", "one-command demo; production uses a pipeline job"],
+      ["Auth inside the service", "light to run; a bank would use a dedicated IdP"],
       ["Outbox is at-least-once", "consumers de-duplicate on eventId"],
     ];
     tradeoffs.forEach(([a, b], i) => {
@@ -410,7 +455,7 @@ async function icon(Comp, color, size = 256) {
       "Key-expiry + nightly reconciliation & chain verification",
       "Reversals as compensating entries",
       "Kafka/Service Bus, OpenTelemetry, least-privilege DB roles",
-      "Asymmetric JWT via JWKS; mTLS to NIP settlement",
+      "Dedicated IdP with OTP/MFA (RS256 via JWKS); mTLS for NIP",
     ];
     card(s, 5.2, 1.45, 4.3, 2.85, C.navy2);
     dotList(s, next, { x: 5.4, y: 1.6, w: 3.95, fontSize: 12, color: C.white });

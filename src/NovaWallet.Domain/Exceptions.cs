@@ -21,6 +21,12 @@ public static class ErrorCodes
     public const string DuplicateReference = "duplicate_reference";
     public const string Forbidden = "forbidden";
     public const string Validation = "validation_error";
+    public const string InvalidCredentials = "invalid_credentials";
+    public const string EmailAlreadyRegistered = "email_already_registered";
+    public const string InvalidRefreshToken = "invalid_refresh_token";
+    public const string WalletFrozen = "wallet_frozen";
+    public const string UserNotFound = "user_not_found";
+    public const string AdminRuleViolation = "admin_rule_violation";
 }
 
 public sealed class InvalidAmountException(string message)
@@ -55,6 +61,25 @@ public sealed class ForbiddenException(string message)
 
 public sealed class RequestValidationException(string message)
     : DomainException(ErrorCodes.Validation, message);
+
+public sealed class WalletFrozenException()
+    : DomainException(ErrorCodes.WalletFrozen, "This wallet is on hold and cannot send money. Contact support.");
+
+/// <summary>Deliberately identical for unknown email, wrong password, disabled or locked account.</summary>
+public sealed class InvalidCredentialsException()
+    : DomainException(ErrorCodes.InvalidCredentials, "The email or password is incorrect.");
+
+public sealed class EmailAlreadyRegisteredException()
+    : DomainException(ErrorCodes.EmailAlreadyRegistered, "An account with this email already exists.");
+
+public sealed class InvalidRefreshTokenException()
+    : DomainException(ErrorCodes.InvalidRefreshToken, "The refresh token is invalid, expired or revoked. Sign in again.");
+
+public sealed class UserNotFoundException(Guid userId)
+    : DomainException(ErrorCodes.UserNotFound, $"User '{userId}' was not found.");
+
+public sealed class AdminRuleViolationException(string message)
+    : DomainException(ErrorCodes.AdminRuleViolation, message);
 
 /// <summary>
 /// Re-raised when an idempotent request is replayed and the original attempt was rejected,

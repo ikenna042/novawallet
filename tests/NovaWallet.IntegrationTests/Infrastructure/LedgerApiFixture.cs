@@ -14,6 +14,8 @@ public sealed class LedgerApiFixture : IAsyncLifetime
 {
     public const string ExternalDbVariable = "NOVAWALLET_TEST_DB";
     public const string SigningKey = "integration-test-signing-key-0123456789abcdef";
+    public const string AdminEmail = "admin@novawallet.test";
+    public const string AdminPassword = "Integration-Admin-2026";
 
     private PostgreSqlContainer? _container;
     private string? _externalAdminConnectionString;
@@ -21,6 +23,9 @@ public sealed class LedgerApiFixture : IAsyncLifetime
 
     public string ConnectionString { get; private set; } = null!;
     public LedgerApiFactory Factory { get; private set; } = null!;
+
+    /// <summary>Signed in once as the seeded administrator and shared by all tests.</summary>
+    public LedgerClient Admin { get; private set; } = null!;
 
     public async Task InitializeAsync()
     {
@@ -54,7 +59,8 @@ public sealed class LedgerApiFixture : IAsyncLifetime
         }.ConnectionString;
 
         Factory = new LedgerApiFactory(ConnectionString);
-        _ = Factory.Server; // boots the host and applies migrations
+        _ = Factory.Server; // boots the host, applies migrations and seeds the admin
+        Admin = await LedgerClient.AdminAsync(Factory);
     }
 
     public async Task DisposeAsync()
@@ -92,9 +98,12 @@ public sealed class LedgerApiFactory(string connectionString, IReadOnlyDictionar
         {
             ["ConnectionStrings:Ledger"] = connectionString,
             ["Jwt:SigningKey"] = LedgerApiFixture.SigningKey,
-            ["Jwt:EnableDevTokenIssuer"] = "true",
+            ["Auth:SeedAdmin:Email"] = LedgerApiFixture.AdminEmail,
+            ["Auth:SeedAdmin:Password"] = LedgerApiFixture.AdminPassword,
+            ["Auth:AccessTokenMinutes"] = "60",
             ["Database:MigrateOnStartup"] = "true",
             ["RateLimiting:Transfers:PermitLimit"] = "100000",
+            ["RateLimiting:Auth:PermitLimit"] = "100000",
             ["Outbox:PollInterval"] = "00:00:00.200",
             ["Logging:UseJson"] = "false",
             ["Serilog:MinimumLevel:Default"] = "Warning",

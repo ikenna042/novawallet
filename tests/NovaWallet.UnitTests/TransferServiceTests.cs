@@ -28,7 +28,7 @@ public class TransferServiceTests
         _bob = _store.Seed("bob", 0, _clock.GetUtcNow());
     }
 
-    private static Actor Alice => new("alice", IsOperator: false);
+    private static Actor Alice => new("alice", IsAdmin: false);
 
     private Task<IdempotentResult<TransactionReceipt>> Transfer(long amount, string key, string? narration = null, Actor? actor = null) =>
         _service.TransferAsync(actor ?? Alice, key, new TransferCommand(_alice.Id, _bob.Id, amount, narration), "corr-1",
@@ -84,7 +84,7 @@ public class TransferServiceTests
     [Fact]
     public async Task A_rejected_transfer_is_remembered_and_replays_the_same_error()
     {
-        var bob = new Actor("bob", IsOperator: false);
+        var bob = new Actor("bob", IsAdmin: false);
         var fromEmptyWallet = new TransferCommand(_bob.Id, _alice.Id, 1_00, null);
         Task<IdempotentResult<TransactionReceipt>> Attempt() =>
             _service.TransferAsync(bob, "key-00000002", fromEmptyWallet, null, CancellationToken.None);
@@ -101,7 +101,7 @@ public class TransferServiceTests
     public async Task Customer_cannot_spend_from_someone_elses_wallet()
     {
         await Assert.ThrowsAsync<WalletNotFoundException>(() =>
-            Transfer(1_00, "key-00000003", actor: new Actor("mallory", IsOperator: false)));
+            Transfer(1_00, "key-00000003", actor: new Actor("mallory", IsAdmin: false)));
         Assert.Equal(0, _store.Wallets[_bob.Id].BalanceKobo);
     }
 

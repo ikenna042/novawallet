@@ -46,11 +46,11 @@ public sealed class WalletsController(WalletService wallets) : ControllerBase
         wallets.GetBalanceAsync(User.ToActor(), walletId, ct);
 
     /// <summary>
-    /// Credit a wallet, simulating an inbound NIP transfer. Operator role only. Idempotent on <c>reference</c>
+    /// Credit a wallet, simulating an inbound NIP transfer. Admin role only. Idempotent on <c>reference</c>
     /// (the NIP session id): a repeat returns the original receipt with <c>Idempotent-Replayed: true</c>.
     /// </summary>
     [HttpPost("{walletId:guid}/credit")]
-    [Authorize(Policy = AuthSetup.OperatorPolicy)]
+    [Authorize(Policy = AuthSetup.AdminPolicy)]
     [ProducesResponseType<TransactionReceipt>(StatusCodes.Status201Created)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
@@ -76,9 +76,9 @@ public sealed class WalletsController(WalletService wallets) : ControllerBase
         Guid walletId, [FromQuery] int? limit, [FromQuery] string? cursor, CancellationToken ct) =>
         wallets.GetStatementAsync(User.ToActor(), walletId, limit, cursor, ct);
 
-    /// <summary>The wallet's append-only audit trail, with hash-chain verification. Operator role only.</summary>
+    /// <summary>The wallet's append-only audit trail, with hash-chain verification. Admin role only.</summary>
     [HttpGet("{walletId:guid}/audit")]
-    [Authorize(Policy = AuthSetup.OperatorPolicy)]
+    [Authorize(Policy = AuthSetup.AdminPolicy)]
     [ProducesResponseType<AuditTrailResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]

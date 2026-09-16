@@ -31,8 +31,11 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Ledger: "Host=db;Port=5432;Database=novawallet;Username=novawallet;Password=${POSTGRES_PASSWORD:-novawallet-local-only}"
       Jwt__SigningKey: ${JWT_SIGNING_KEY:-local-demo-signing-key-not-for-production-0123456789}
-      # Mock issuer so the panel can get tokens. Never enable this in a real environment.
-      Jwt__EnableDevTokenIssuer: "true"
+      # First administrator, created on startup if missing. Demo defaults only: override via .env.
+      Auth__SeedAdmin__Email: ${ADMIN_EMAIL:-admin@novawallet.local}
+      Auth__SeedAdmin__Password: ${ADMIN_PASSWORD:-ChangeMe-Admin-2026!}
+      # Sign-up/sign-in attempts per client IP per minute (a little generous so demos can be repeated).
+      RateLimiting__Auth__PermitLimit: ${AUTH_RATE_LIMIT:-20}
       Database__MigrateOnStartup: "true"
       Swagger__Enabled: "true"
       Ledger__DailyTransferLimitKobo: ${DAILY_TRANSFER_LIMIT_KOBO:-50000000}

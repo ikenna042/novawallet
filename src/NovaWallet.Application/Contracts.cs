@@ -1,7 +1,10 @@
 namespace NovaWallet.Application;
 
 /// <summary>The authenticated caller, derived from JWT claims by the API layer.</summary>
-public sealed record Actor(string SubjectId, bool IsOperator);
+public sealed record Actor(string SubjectId, bool IsAdmin)
+{
+    public Guid UserId => Guid.ParseExact(SubjectId, "N");
+}
 
 public sealed record CreateWalletCommand(string? CustomerId);
 
@@ -9,7 +12,8 @@ public sealed record CreditCommand(long AmountKobo, string? Reference, string? N
 
 public sealed record TransferCommand(Guid SourceWalletId, Guid DestinationWalletId, long AmountKobo, string? Narration);
 
-public sealed record WalletResponse(Guid WalletId, string CustomerId, long BalanceKobo, string Currency, DateTimeOffset CreatedAt);
+public sealed record WalletResponse(
+    Guid WalletId, string CustomerId, long BalanceKobo, string Currency, string Status, string? FrozenReason, DateTimeOffset CreatedAt);
 
 public sealed record BalanceResponse(Guid WalletId, long BalanceKobo, string Currency, string BalanceDisplay, DateTimeOffset UpdatedAt);
 
@@ -74,3 +78,37 @@ public sealed record TransferCompletedEvent(
 {
     public const string EventType = "wallet.transfer.completed.v1";
 }
+
+// ---------- authentication & administration ----------
+
+public sealed record RegisterCommand(string? Email, string? Password, string? FullName);
+
+public sealed record LoginCommand(string? Email, string? Password);
+
+public sealed record UserProfile(
+    Guid UserId,
+    string Email,
+    string? FullName,
+    string Role,
+    string Status,
+    string? DisabledReason,
+    Guid? WalletId,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? LastLoginAt);
+
+public sealed record AuthTokens(
+    string AccessToken,
+    string TokenType,
+    int ExpiresIn,
+    DateTimeOffset AccessTokenExpiresAt,
+    string RefreshToken,
+    DateTimeOffset RefreshTokenExpiresAt,
+    UserProfile User);
+
+public sealed record UserPage(IReadOnlyList<UserProfile> Items, string? NextCursor);
+
+public sealed record AdminActionItem(
+    long Id, string ActorId, string Action, string TargetType, string TargetId, string? Detail,
+    string? CorrelationId, DateTimeOffset OccurredAt);
+
+public sealed record AdminActionPage(IReadOnlyList<AdminActionItem> Items, string? NextCursor);

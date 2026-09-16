@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using NovaWallet.Application.Abstractions;
+using NovaWallet.Infrastructure.Auth;
 using NovaWallet.Infrastructure.Outbox;
 using NovaWallet.Infrastructure.Persistence;
 
@@ -22,6 +23,8 @@ public static class DependencyInjection
             ConfigureDbContext(options, connectionString);
         });
         services.AddScoped<ILedgerStore, LedgerStore>();
+        services.AddScoped<IUserStore, UserStore>();
+        services.AddSingleton<IPasswordHasher, IdentityPasswordHasher>();
 
         services.Configure<OutboxOptions>(configuration.GetSection(OutboxOptions.SectionName));
         services.AddSingleton<IEventPublisher, LoggingEventPublisher>();

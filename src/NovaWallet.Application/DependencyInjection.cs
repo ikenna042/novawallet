@@ -14,11 +14,19 @@ public static class DependencyInjection
                 "Ledger limits must be positive.")
             .ValidateOnStart();
 
+        services.AddOptions<AuthOptions>()
+            .Bind(configuration.GetSection(AuthOptions.SectionName))
+            .Validate(o => o.AccessTokenMinutes is > 0 and <= 60, "Auth:AccessTokenMinutes must be 1-60.")
+            .Validate(o => o.RefreshTokenDays is > 0 and <= 90, "Auth:RefreshTokenDays must be 1-90.")
+            .ValidateOnStart();
+
         services.TryAddSingleton(TimeProvider.System);
         services.AddSingleton<DailyLimitPolicy>();
         services.AddSingleton<RequestGuard>();
         services.AddScoped<WalletService>();
         services.AddScoped<TransferService>();
+        services.AddScoped<AuthService>();
+        services.AddScoped<AdminService>();
         return services;
     }
 }

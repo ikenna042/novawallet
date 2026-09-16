@@ -6,6 +6,8 @@ This is the component that must never lose, duplicate or miscount a customer's m
 - every request that moves money is idempotent;
 - the database itself enforces the invariants the application relies on.
 
+Customers register and sign in with a password; administrators manage users, freeze wallets and read the audit trail.
+
 > Take-home task for the Backend Engineer (.NET) role, FirstBank Digital Factory. Author: Ikenna Odoh.
 > How AI tools were used (and where they were wrong) is documented in [AI_USAGE.md](AI_USAGE.md).
 
@@ -24,6 +26,7 @@ That one command starts PostgreSQL and the API. Migrations run on startup.
 | Swagger UI / OpenAPI | http://localhost:8080/swagger  (spec: `/swagger/v1/swagger.json`) |
 | Liveness / readiness | http://localhost:8080/health/live, http://localhost:8080/health/ready |
 | PostgreSQL (for inspecting tables) | `localhost:5433`, db/user `novawallet`, password `novawallet-local-only` |
+| Seeded administrator (demo only) | `admin@novawallet.local` / `ChangeMe-Admin-2026!`. Override with `ADMIN_EMAIL` / `ADMIN_PASSWORD` in `.env` |
 
 **Step-by-step manual testing,** mapped to every requirement: [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md).
 
@@ -33,26 +36,34 @@ That one command starts PostgreSQL and the API. Migrations run on startup.
 ./scripts/smoke-test.sh http://localhost:8080
 ```
 
-**Getting a token by hand.** Compose enables a *mock* issuer. Get a token from it, then click **Authorize** in Swagger:
+**Signing in by hand.** Register a customer, sign in, then click **Authorize** in Swagger and paste the `accessToken`:
 
 ```bash
-curl -s -X POST localhost:8080/dev/token -H 'Content-Type: application/json' \
-  -d '{"subject":"alice","role":"customer"}'      # role: customer | operator
+curl -s -X POST localhost:8080/api/v1/auth/register -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"Alice-Passw0rd","fullName":"Alice"}'
+curl -s -X POST localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"Alice-Passw0rd"}' | jq
 ```
 
 <details>
 <summary>A full flow with curl</summary>
 
 ```bash
-T_ALICE=$(curl -s -X POST localhost:8080/dev/token -H 'Content-Type: application/json' -d '{"subject":"alice"}' | jq -r .accessToken)
-T_BOB=$(curl -s -X POST localhost:8080/dev/token -H 'Content-Type: application/json' -d '{"subject":"bob"}' | jq -r .accessToken)
-T_OPS=$(curl -s -X POST localhost:8080/dev/token -H 'Content-Type: application/json' -d '{"subject":"nip-settlement","role":"operator"}' | jq -r .accessToken)
+login() { curl -s -X POST localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$1\",\"password\":\"$2\"}" | jq -r .accessToken; }
+for u in alice bob; do
+  curl -s -X POST localhost:8080/api/v1/auth/register -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$u@example.com\",\"password\":\"Demo-Passw0rd\"}" > /dev/null
+done
+T_ALICE=$(login alice@example.com Demo-Passw0rd)
+T_BOB=$(login bob@example.com Demo-Passw0rd)
+T_ADMIN=$(login admin@novawallet.local 'ChangeMe-Admin-2026!')
 
 A=$(curl -s -X POST localhost:8080/api/v1/wallets -H "Authorization: Bearer $T_ALICE" | jq -r .walletId)
 B=$(curl -s -X POST localhost:8080/api/v1/wallets -H "Authorization: Bearer $T_BOB" | jq -r .walletId)
 
-# Inbound NIP credit of ₦10,000 (operator only; idempotent on the NIP session reference)
-curl -s -X POST localhost:8080/api/v1/wallets/$A/credit -H "Authorization: Bearer $T_OPS" \
+# Inbound NIP credit of ₦10,000 (admin only; idempotent on the NIP session reference)
+curl -s -X POST localhost:8080/api/v1/wallets/$A/credit -H "Authorization: Bearer $T_ADMIN" \
   -H 'Content-Type: application/json' -d '{"amountKobo":1000000,"reference":"NIP000000000001"}'
 
 # Transfer ₦2,500 (run it twice: the second response carries Idempotent-Replayed: true)
@@ -61,7 +72,7 @@ curl -si -X POST localhost:8080/api/v1/transfers -H "Authorization: Bearer $T_AL
   -d "{\"sourceWalletId\":\"$A\",\"destinationWalletId\":\"$B\",\"amountKobo\":250000}"
 
 curl -s localhost:8080/api/v1/wallets/$A/statement -H "Authorization: Bearer $T_ALICE" | jq
-curl -s localhost:8080/api/v1/wallets/$A/audit -H "Authorization: Bearer $T_OPS" | jq '.chainIntact'
+curl -s localhost:8080/api/v1/wallets/$A/audit -H "Authorization: Bearer $T_ADMIN" | jq '.chainIntact'
 ```
 </details>
 
@@ -69,7 +80,7 @@ curl -s localhost:8080/api/v1/wallets/$A/audit -H "Authorization: Bearer $T_OPS"
 
 ```bash
 ConnectionStrings__Ledger="Host=localhost;Port=5432;Database=novawallet;Username=postgres" \
-  dotnet run --project src/NovaWallet.Api      # Development settings: migrations + mock issuer on
+  dotnet run --project src/NovaWallet.Api      # Development settings: migrations + demo admin seeded
 ```
 
 ## 2. Test it
@@ -80,8 +91,8 @@ dotnet test
 
 | Suite | Count | What it covers |
 |---|---|---|
-| `NovaWallet.UnitTests` | 45 | `Money` arithmetic and overflow, WAT day boundaries, daily-limit edge cases, audit hash chain, request validation, transfer orchestration against an in-memory store (lock order, replay, rejection caching) |
-| `NovaWallet.IntegrationTests` | 46 | The full HTTP pipeline against **real PostgreSQL**: concurrency under load, idempotency, auth, validation, Problem Details, pagination, append-only triggers, CHECK constraints, outbox, rate limiting, health, OpenAPI |
+| `NovaWallet.UnitTests` | 74 | `Money` arithmetic and overflow, WAT day boundaries, daily-limit edge cases, audit hash chain, request validation, transfer orchestration against an in-memory store (lock order, replay, rejection caching), password and email rules, lockout, token rotation and reuse detection, wallet freeze, admin rules |
+| `NovaWallet.IntegrationTests` | 74 | The full HTTP pipeline against **real PostgreSQL**: concurrency under load, idempotency, sign-up / sign-in / refresh / logout (including concurrent refresh), instant revocation on disable and role change, admin user management, wallet freeze, admin action log, validation, Problem Details, pagination, append-only triggers, CHECK constraints, outbox, rate limiting, health, OpenAPI |
 
 Integration tests start PostgreSQL with **Testcontainers**, so Docker is required; CI runs them this way.
 Without Docker, point them at any server and they create and drop a throwaway database:
@@ -110,22 +121,57 @@ On an Apple M1 with local PostgreSQL 16, the 200-request test takes about 250 ms
 |---|---|
 | Removed `FOR UPDATE` from the wallet lock | 4 of 5 concurrency tests failed. **199 of 200** ₦100 transfers "succeeded" from a ₦1,000 wallet (lost updates); the daily-limit test let 40 of 40 through. |
 | Removed the lock ordering | The opposing-transfers test failed with PostgreSQL `40P01 deadlock detected`. |
+| Removed the per-request user check on tokens | 4 auth/admin tests failed: disabled and demoted users kept access, and a token claiming a role the user doesn't have got through. |
+| Removed `FOR UPDATE` from refresh-token rotation | **10 of 10** concurrent refreshes of one token succeeded (a stolen refresh token could be cloned). |
 
 ## 3. API
 
-All endpoints need a JWT bearer token except health, Swagger and the mock issuer. All amounts are **integers in kobo**.
+All endpoints need a JWT bearer token except sign-up, sign-in, token refresh, health and Swagger. All amounts are **integers in kobo**.
+
+**Authentication**
 
 | Method | Path | Who | Notes |
 |---|---|---|---|
-| POST | `/api/v1/wallets` | customer (own) / operator (any `customerId`) | 201; 409 if the customer already has a wallet |
-| GET | `/api/v1/wallets/{id}` | owner / operator | |
-| GET | `/api/v1/wallets/{id}/balance` | owner / operator | `balanceKobo`, `currency: NGN`, `balanceDisplay: ₦7,500.00` |
-| POST | `/api/v1/wallets/{id}/credit` | **operator** | Simulated inbound NIP. Idempotent on `reference` (NIP session id) |
+| POST | `/api/v1/auth/register` | anonymous | Creates a **customer** (never an admin). Password: 10–128 chars, at least one letter and one digit |
+| POST | `/api/v1/auth/login` | anonymous | Returns a 15-minute `accessToken` and a 7-day `refreshToken`. Every failure is the same 401 `invalid_credentials`; 5 wrong passwords lock the account for 15 minutes |
+| POST | `/api/v1/auth/refresh` | anonymous | Rotates the refresh token. Reusing an old one revokes the whole session |
+| POST | `/api/v1/auth/logout` | signed in | Revokes the session the refresh token belongs to |
+| GET | `/api/v1/auth/me` | signed in | Profile, role and wallet id |
+
+Sign-up, sign-in and refresh are rate-limited per client IP.
+
+**Wallets and transfers**
+
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| POST | `/api/v1/wallets` | customer (own) / admin (any registered `customerId`) | 201; 409 if the customer already has a wallet |
+| GET | `/api/v1/wallets/{id}` | owner / admin | Includes `status` (`Active` / `Frozen`) |
+| GET | `/api/v1/wallets/{id}/balance` | owner / admin | `balanceKobo`, `currency: NGN`, `balanceDisplay: ₦7,500.00` |
+| POST | `/api/v1/wallets/{id}/credit` | **admin** | Simulated inbound NIP. Idempotent on `reference` (NIP session id) |
 | POST | `/api/v1/transfers` | owner of source | **`Idempotency-Key` header required**; rate-limited per customer |
-| GET | `/api/v1/wallets/{id}/statement?limit=&cursor=` | owner / operator | Newest first, keyset pagination (`nextCursor`) |
-| GET | `/api/v1/wallets/{id}/audit` | **operator** | Append-only audit trail + `chainIntact` verification |
-| POST | `/dev/token` | anonymous | Mock issuer. Only exists when `Jwt__EnableDevTokenIssuer=true` |
-| GET | `/health/live`, `/health/ready` | anonymous | Readiness checks the database |
+| GET | `/api/v1/wallets/{id}/statement?limit=&cursor=` | owner / admin | Newest first, keyset pagination (`nextCursor`) |
+| GET | `/api/v1/wallets/{id}/audit` | **admin** | Append-only audit trail + `chainIntact` verification |
+
+**Administration** (admin only; every change is written to the append-only admin action log)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/v1/admin/users?email=&limit=&cursor=` | Search and page through users (with their wallet ids) |
+| GET | `/api/v1/admin/users/{userId}` | One user |
+| POST | `/api/v1/admin/users/{userId}/disable` `{reason}` | Blocks sign-in and kills existing tokens and sessions **immediately** |
+| POST | `/api/v1/admin/users/{userId}/enable` | Re-enables the account |
+| POST | `/api/v1/admin/users/{userId}/role` `{role}` | `admin` or `customer`. Old tokens stop working; the user signs in again |
+| POST | `/api/v1/admin/wallets/{walletId}/freeze` `{reason}` | Debit hold: outbound transfers get 422 `wallet_frozen`; credits still land |
+| POST | `/api/v1/admin/wallets/{walletId}/unfreeze` | Lifts the hold |
+| GET | `/api/v1/admin/actions?limit=&cursor=` | The admin action log, newest first |
+
+Admins can't disable or demote themselves, and the last active admin can't be removed (409 `admin_rule_violation`).
+
+**Platform**
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/health/live`, `/health/ready` | Readiness checks the database |
 
 Every error is an RFC 7807 `application/problem+json` body. Clients should branch on the stable `code` field, not on the message:
 
@@ -145,11 +191,11 @@ Every error is an RFC 7807 `application/problem+json` body. Clients should branc
 | Status | `code` |
 |---|---|
 | 400 | `validation_error`, `invalid_amount`, `same_wallet_transfer`, plus model-binding errors |
-| 401 | missing, expired or invalid token |
-| 403 | `forbidden` |
-| 404 | `wallet_not_found` (also returned for other customers' wallets, so ids can't be probed) |
-| 409 | `wallet_already_exists`, `duplicate_reference` |
-| 422 | `insufficient_funds`, `daily_limit_exceeded`, `idempotency_key_reused` |
+| 401 | missing, expired, revoked or invalid token; `invalid_credentials`; `invalid_refresh_token` |
+| 403 | `forbidden` (e.g. a customer calling an admin endpoint) |
+| 404 | `wallet_not_found` (also returned for other customers' wallets, so ids can't be probed), `user_not_found` |
+| 409 | `wallet_already_exists`, `duplicate_reference`, `email_already_registered`, `admin_rule_violation` |
+| 422 | `insufficient_funds`, `daily_limit_exceeded`, `idempotency_key_reused`, `wallet_frozen` |
 | 429 | `rate_limited` (with `Retry-After`) |
 | 500 | `internal_error` (no internals leaked; quote the correlation id) |
 
@@ -165,27 +211,32 @@ flowchart LR
     subgraph App["NovaWallet.Application"]
       TS[TransferService] --- WS[WalletService]
       TS --- DL[DailyLimitPolicy]
+      AS[AuthService] --- ADS[AdminService]
     end
-    App -->|ILedgerStore port| Infra
+    App -->|ILedgerStore / IUserStore ports| Infra
     subgraph Infra["NovaWallet.Infrastructure"]
-      LS["LedgerStore (EF Core + raw SQL locks)"]
+      LS["LedgerStore / UserStore (EF Core + raw SQL locks)"]
+      PH["PBKDF2 password hasher"]
       OP[OutboxProcessor]
     end
     Infra --> PG[(PostgreSQL 16)]
     OP -->|TransferCompleted| Broker["Event publisher (log stand-in for Kafka / Service Bus)"]
-    App --> Dom["NovaWallet.Domain: Money, Wallet, LedgerEntry, AuditRecord"]
+    App --> Dom["NovaWallet.Domain: Money, Wallet, LedgerEntry, AuditRecord, User, RefreshToken"]
 ```
 
 - **Domain** has no dependencies. `Money` is a `long` of kobo with `checked` arithmetic; the entities guard their own invariants.
-- **Application** holds the use cases and all business rules. It depends only on the `ILedgerStore` port, so orchestration can be unit-tested with an in-memory store.
-- **Infrastructure** holds EF Core mappings, migrations, the locking SQL and the outbox worker.
-- **Api** handles transport concerns only: auth, validation, Problem Details, rate limiting, logging, health, OpenAPI.
+- **Application** holds the use cases and all business rules, including sign-in, token rotation and the admin rules. It depends only on ports (`ILedgerStore`, `IUserStore`, `IPasswordHasher`, `ITokenIssuer`), so orchestration can be unit-tested with in-memory fakes.
+- **Infrastructure** holds EF Core mappings, migrations, the locking SQL, the password hasher, the admin seeder and the outbox worker.
+- **Api** handles transport concerns only: JWT issuing and validation, validation, Problem Details, rate limiting, logging, health, OpenAPI.
 
 ### Data model (all amounts `bigint` kobo)
 
 | Table | Purpose | Guards |
 |---|---|---|
-| `wallets` | One per customer; current balance | `CHECK (balance_kobo >= 0)`, `CHECK (currency = 'NGN')`, unique `customer_id` |
+| `wallets` | One per customer; current balance; `status` (`Active` / `Frozen`) with the freeze reason | `CHECK (balance_kobo >= 0)`, `CHECK (currency = 'NGN')`, a frozen wallet must have a reason, unique `customer_id` |
+| `users` | Email (lower-cased, unique), optional name, PBKDF2 password hash, role, status, `token_version`, failed-login counter and lockout | `CHECK (email = lower(email))`, `CHECK (token_version >= 1)` |
+| `refresh_tokens` | SHA-256 of each refresh token, its session `family_id`, expiry and revocation | unique hash |
+| `admin_actions` | Who changed what, to whom, why, with the correlation id | **append-only trigger**, no foreign keys |
 | `ledger_transactions` | One row per business event (credit / transfer) | `CHECK (amount_kobo > 0)`, transfer shape check, unique `reference`, **append-only trigger** |
 | `ledger_entries` | Double-entry lines with running `balance_after_kobo`; source of the statement | `CHECK`s, **append-only trigger** |
 | `audit_log` | One row per balance mutation: before / delta / after, actor, correlation id, SHA-256 hash chain | `CHECK (before + delta = after)`, **append-only trigger** (UPDATE / DELETE / TRUNCATE rejected) |
@@ -226,20 +277,30 @@ Everything below happens in **one** database transaction at READ COMMITTED:
 | **Other customers' wallets return 404** | Wallet ids can't be enumerated. | None worth noting. |
 | **Migrations on startup** (compose / dev only) | Satisfies the single-command start. | In production this would be a separate migration job, since concurrent replicas would race. |
 | **No `EnableRetryOnFailure`** | EF's retrying execution strategy is incompatible with user-initiated transactions. | Transient failures surface as 500. The client retries with the same idempotency key, which is safe. |
+| **Auth built into the service** (register / login / refresh), not an external IdP | Keeps `docker compose up` to two light containers while still exercising real credentials, sessions and roles. | In a bank a dedicated IdP (e.g. Keycloak / Entra ID) with MFA would issue tokens and this service would only validate them (RS256 via JWKS). The token-validation path is the part that would stay. |
+| **Short access tokens (15 min) + rotating refresh tokens with reuse detection** | A leaked access token is useful only briefly; a stolen refresh token is detected the moment either party uses an old copy. | Two tabs refreshing the same token at the same instant are treated as reuse and signed out (security over convenience). |
+| **Per-request user lookup** (status, role, `token_version`) | Disabling a user or changing their role takes effect immediately, not when the token expires. | One primary-key read per request; a short cache would trade a few seconds of staleness for fewer reads. |
+| **Identical 401 for every sign-in failure**, dummy hash for unknown emails, lockout after 5 failures, per-IP rate limit | Doesn't reveal which emails exist; slows password guessing. | Lockout can be abused to lock someone out for 15 minutes; a production system would add CAPTCHA / risk scoring. Registration does reveal an existing email (409), a usability trade-off noted here. |
+| **Freeze = debit hold** | Matches how banks place fraud / dispute holds: money can still arrive. | A full freeze (no credits) would be a second status if compliance required it. |
 
 ## 6. Security and Nigerian operating context
 
-- **AuthN / AuthZ.** JWT bearer auth checks issuer, audience, lifetime (30 s skew) and signature. The algorithm is pinned to HS256, so `alg: none` is rejected (there's a test for it). Claims are not remapped (`sub`, `role`). A fallback policy makes every endpoint require authentication unless it opts out. Credits and audit access require the `operator` role, and ownership is checked in the application layer.
-- **Mock issuer.** `/dev/token` exists only when `Jwt__EnableDevTokenIssuer=true` and logs a warning at startup. In production, tokens would come from the bank's IdP with asymmetric keys discovered via JWKS.
+- **Sign-in.**
+  - Passwords are hashed with PBKDF2-HMAC-SHA512 (100,000 iterations, random salt) via ASP.NET Core's `PasswordHasher`; old hashes are upgraded on the next sign-in.
+  - Every sign-in failure returns the same 401, unknown emails still run a hash comparison, and 5 failures lock the account for 15 minutes.
+  - Refresh tokens are 256-bit random values; only their SHA-256 is stored. They rotate on every use, and reuse of an old one revokes the whole session.
+- **Tokens.** Access tokens last 15 minutes. Validation checks issuer, audience, lifetime (30 s skew) and signature, with the algorithm pinned to HS256 (`alg: none` is rejected; there's a test). On every request the user must still be active and the token's role and `ver` must match the database, so disabling or re-roling a user is instant. Tokens carry no email or name.
+- **Authorisation.** A fallback policy makes every endpoint require authentication unless it opts out. Admin endpoints, credits and audit access require the `admin` role, checked by policy **and** again in the application layer; ownership of wallets is checked in the application layer. Public sign-up can only create customers, and the first admin is seeded from configuration.
+- **Admin safety.** Admins can't disable or demote themselves, the last active admin can't be removed (the check locks all admin rows so two admins can't race), and every admin action is written to an append-only log with the correlation id.
 - **Secrets.** The signing key and DB password come from the environment. Startup fails if the key is under 32 bytes. Compose defaults are clearly local-only (see `.env.example`); real deployments would use a secret store.
 - **Input validation.**
   - Model validation plus application-level guards, and unknown JSON fields are rejected.
   - Idempotency keys, references, customer ids and correlation ids are restricted to `[A-Za-z0-9_-]`, which also prevents log injection.
   - Narration is length-limited and control characters are rejected.
   - Page size is capped.
-- **Abuse.** Transfers are rate-limited per customer and return 429 with `Retry-After`.
+- **Abuse.** Transfers are rate-limited per customer, and sign-up / sign-in / refresh per client IP; both return 429 with `Retry-After`.
 - **NDPA 2023.**
-  - The service stores no BVN, NIN, names or phone numbers, only an opaque customer id.
+  - The service stores only what sign-in needs: an email, an optional display name and a password hash. No BVN, NIN or phone numbers; those belong to the KYC service.
   - Request bodies are never logged.
   - Logs carry wallet ids, subject and correlation id.
   - Audit records are the lawful-basis evidence trail and have no foreign keys, so they can outlive the wallet.
@@ -251,13 +312,14 @@ Everything below happens in **one** database transaction at READ COMMITTED:
 
 ## 7. Assumptions
 
-- One NGN wallet per customer (`customerId` = the token's `sub`).
-- "Credit wallet (simulating an inbound NIP transfer)" is a system-to-system call. It is therefore restricted to an `operator` role, and the NIP session id is the idempotency reference.
+- One NGN wallet per registered user. The wallet's `customerId` is the user's id (the token's `sub`).
+- "Credit wallet (simulating an inbound NIP transfer)" is a system-to-system call. It is therefore restricted to the `admin` role (standing in for the settlement integration), and the NIP session id is the idempotency reference.
+- Email verification, password reset and MFA/OTP are out of scope for this exercise.
 - Transfers are between wallets in this ledger. Outbound NIP to other banks is out of scope.
 - The ₦500,000 limit applies to outbound wallet-to-wallet transfers (credits don't count). It resets at 00:00 WAT (UTC+1).
 - A transfer's `Idempotency-Key` must be 8–64 characters of `[A-Za-z0-9_-]` (a UUID is recommended).
 - Both the first call and a replay return **201**, with `Idempotent-Replayed: true|false` telling them apart.
-- The audit trail is exposed read-only to operators through the API, and reviewers can also query `audit_log` directly in PostgreSQL.
+- The audit trail is exposed read-only to admins through the API, and reviewers can also query `audit_log` directly in PostgreSQL.
 
 ## 8. What I would do next
 
@@ -266,20 +328,20 @@ Everything below happens in **one** database transaction at READ COMMITTED:
 3. Reversal / chargeback flow as compensating entries (never updates).
 4. Real broker (Kafka / Azure Service Bus), OpenTelemetry traces and metrics, and alerts on 5xx and outbox lag.
 5. Least-privilege DB roles, migrations as a pipeline step, and table partitioning of `ledger_entries` / `audit_log` by month.
-6. Asymmetric JWT via JWKS; mTLS for the NIP settlement integration.
+6. Move sign-in to a dedicated IdP with OTP / MFA, email verification and password reset; validate its RS256 tokens via JWKS; mTLS (not a user account) for the NIP settlement integration.
 
 ## 9. Repository layout
 
 ```
 src/
-  NovaWallet.Domain/          Money, Wallet, LedgerTransaction/Entry, AuditRecord (+ chain verify), errors
-  NovaWallet.Application/     TransferService, WalletService, DailyLimitPolicy, RequestGuard, ILedgerStore
-  NovaWallet.Infrastructure/  LedgerDbContext, LedgerStore (locks, idempotency SQL), migrations, outbox
-  NovaWallet.Api/             Controllers, JWT setup, Problem Details, rate limiting, correlation id, Program.cs
+  NovaWallet.Domain/          Money, Wallet, LedgerTransaction/Entry, AuditRecord (+ chain verify), User, RefreshToken, AdminAction, errors
+  NovaWallet.Application/     TransferService, WalletService, AuthService, AdminService, DailyLimitPolicy, ports
+  NovaWallet.Infrastructure/  LedgerDbContext, LedgerStore, UserStore (locks, idempotency SQL), password hasher, admin seeder, migrations, outbox
+  NovaWallet.Api/             Controllers (wallets, transfers, auth, admin), JWT issuing/validation, Problem Details, rate limiting, correlation id
 tests/
-  NovaWallet.UnitTests/         45 tests
-  NovaWallet.IntegrationTests/  46 tests (PostgreSQL via Testcontainers or NOVAWALLET_TEST_DB)
+  NovaWallet.UnitTests/         74 tests
+  NovaWallet.IntegrationTests/  74 tests (PostgreSQL via Testcontainers or NOVAWALLET_TEST_DB)
 scripts/smoke-test.sh         end-to-end check used by CI against `docker compose up`
 .github/workflows/ci.yml      build + all tests; compose smoke test
-docs/                         presentation deck
+docs/                         testing guide, presentation deck
 ```

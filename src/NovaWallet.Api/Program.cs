@@ -7,6 +7,7 @@ using NovaWallet.Api.Auth;
 using NovaWallet.Api.Infrastructure;
 using NovaWallet.Application;
 using NovaWallet.Infrastructure;
+using NovaWallet.Infrastructure.Auth;
 using NovaWallet.Infrastructure.Persistence;
 using Serilog;
 using Serilog.Formatting.Compact;
@@ -65,7 +66,8 @@ builder.Services.AddSwaggerGen(c =>
         Title = "NovaWallet Ledger API",
         Version = "v1",
         Description = "Wallet ledger for FirstBank NovaPay. All amounts are integers in kobo (NGN). "
-                      + "Get a token from POST /dev/token (local only), then click Authorize.",
+                      + "Register with POST /api/v1/auth/register, sign in with POST /api/v1/auth/login, "
+                      + "then click Authorize and paste the accessToken. Admin endpoints need an admin account.",
     });
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
@@ -90,6 +92,7 @@ if (app.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
     await using var scope = app.Services.CreateAsyncScope();
     await scope.ServiceProvider.GetRequiredService<LedgerDbContext>().Database.MigrateAsync();
 }
+await AdminSeeder.SeedAsync(app.Services);
 
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseSerilogRequestLogging(o => o.EnrichDiagnosticContext = (diagnostics, http) =>
@@ -115,7 +118,6 @@ app.UseAuthorization();
 app.UseRateLimiter();
 
 app.MapControllers();
-app.MapDevTokenEndpoint();
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false }).AllowAnonymous();
 app.MapHealthChecks("/health/ready", new HealthCheckOptions

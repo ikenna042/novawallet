@@ -7,6 +7,7 @@ namespace NovaWallet.Application;
 
 public sealed class WalletService(
     ILedgerStore store,
+    IUserStore users,
     RequestGuard guard,
     TimeProvider timeProvider,
     ILogger<WalletService> logger)
@@ -17,8 +18,12 @@ public sealed class WalletService(
     public async Task<WalletResponse> CreateAsync(Actor actor, CreateWalletCommand command, CancellationToken ct)
     {
         var customerId = RequestGuard.CustomerId(command.CustomerId ?? actor.SubjectId);
-        if (!actor.IsOperator && customerId != actor.SubjectId)
+        if (!actor.IsAdmin && customerId != actor.SubjectId)
             throw new ForbiddenException("Customers can only create a wallet for themselves.");
+
+        // Wallets belong to registered users; the customer id is the user's id.
+        if (!Guid.TryParseExact(customerId, "N", out var userId) || await users.FindByIdAsync(userId, ct) is null)
+            throw new RequestValidationException("customerId must be the id of a registered user.");
 
         var wallet = new Wallet(Guid.NewGuid(), customerId, timeProvider.GetLedgerNow());
         if (!await store.TryCreateWalletAsync(wallet, ct))
@@ -38,15 +43,15 @@ public sealed class WalletService(
     }
 
     /// <summary>
-    /// Simulates an inbound NIP credit, so only operators (the settlement integration) may call it.
+    /// Simulates an inbound NIP credit, so only administrators (standing in for the settlement integration) may call it.
     /// The NIP session reference makes it idempotent: the same reference, wallet and amount returns the
     /// original receipt; the same reference with different details is rejected.
     /// </summary>
     public async Task<IdempotentResult<TransactionReceipt>> CreditAsync(
         Actor actor, Guid walletId, CreditCommand command, string? correlationId, CancellationToken ct)
     {
-        if (!actor.IsOperator)
-            throw new ForbiddenException("Only the settlement operator can credit wallets.");
+        if (!actor.IsAdmin)
+            throw new ForbiddenException("Only an administrator (the NIP settlement integration) can credit wallets.");
 
         var amount = guard.Amount(command.AmountKobo);
         var reference = RequestGuard.Reference(command.Reference);
@@ -129,8 +134,8 @@ public sealed class WalletService(
 
     public async Task<AuditTrailResponse> GetAuditTrailAsync(Actor actor, Guid walletId, CancellationToken ct)
     {
-        if (!actor.IsOperator)
-            throw new ForbiddenException("Only operators can read the audit trail.");
+        if (!actor.IsAdmin)
+            throw new ForbiddenException("Only administrators can read the audit trail.");
         _ = await store.FindWalletAsync(walletId, ct) ?? throw new WalletNotFoundException(walletId);
 
         var records = await store.GetAuditTrailAsync(walletId, ct);
@@ -145,7 +150,7 @@ public sealed class WalletService(
     {
         var wallet = await store.FindWalletAsync(walletId, ct);
         // Report someone else's wallet as not found so ids can't be probed.
-        if (wallet is null || (!actor.IsOperator && !wallet.IsOwnedBy(actor.SubjectId)))
+        if (wallet is null || (!actor.IsAdmin && !wallet.IsOwnedBy(actor.SubjectId)))
             throw new WalletNotFoundException(walletId);
         return wallet;
     }
@@ -170,5 +175,5 @@ public sealed class WalletService(
         t.AmountKobo, Money.Currency, balanceAfterKobo, t.Narration, t.CreatedAt);
 
     private static WalletResponse ToResponse(Wallet w) =>
-        new(w.Id, w.CustomerId, w.BalanceKobo, w.Currency, w.CreatedAt);
+        new(w.Id, w.CustomerId, w.BalanceKobo, w.Currency, w.Status.ToString(), w.FrozenReason, w.CreatedAt);
 }

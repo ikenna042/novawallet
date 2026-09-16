@@ -42,11 +42,13 @@ public sealed class DomainExceptionHandler(IProblemDetailsService problemDetails
     public static int StatusFor(string code) => code switch
     {
         ErrorCodes.Validation or ErrorCodes.InvalidAmount or ErrorCodes.SameWalletTransfer => StatusCodes.Status400BadRequest,
+        ErrorCodes.InvalidCredentials or ErrorCodes.InvalidRefreshToken => StatusCodes.Status401Unauthorized,
         ErrorCodes.Forbidden => StatusCodes.Status403Forbidden,
-        ErrorCodes.WalletNotFound => StatusCodes.Status404NotFound,
-        ErrorCodes.WalletAlreadyExists or ErrorCodes.DuplicateReference => StatusCodes.Status409Conflict,
+        ErrorCodes.WalletNotFound or ErrorCodes.UserNotFound => StatusCodes.Status404NotFound,
+        ErrorCodes.WalletAlreadyExists or ErrorCodes.DuplicateReference or ErrorCodes.EmailAlreadyRegistered
+            or ErrorCodes.AdminRuleViolation => StatusCodes.Status409Conflict,
         ErrorCodes.InsufficientFunds or ErrorCodes.DailyLimitExceeded or ErrorCodes.IdempotencyKeyReused
-            => StatusCodes.Status422UnprocessableEntity,
+            or ErrorCodes.WalletFrozen => StatusCodes.Status422UnprocessableEntity,
         _ => StatusCodes.Status400BadRequest,
     };
 
@@ -77,6 +79,12 @@ public sealed class DomainExceptionHandler(IProblemDetailsService problemDetails
         ErrorCodes.DuplicateReference => "Duplicate reference",
         ErrorCodes.Forbidden => "Forbidden",
         ErrorCodes.Validation => "Validation failed",
+        ErrorCodes.InvalidCredentials => "Invalid credentials",
+        ErrorCodes.InvalidRefreshToken => "Invalid refresh token",
+        ErrorCodes.EmailAlreadyRegistered => "Email already registered",
+        ErrorCodes.WalletFrozen => "Wallet frozen",
+        ErrorCodes.UserNotFound => "User not found",
+        ErrorCodes.AdminRuleViolation => "Not allowed",
         _ => "Request rejected",
     };
 }

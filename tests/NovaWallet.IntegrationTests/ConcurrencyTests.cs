@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
-using NovaWallet.Api.Auth;
 using NovaWallet.Application;
 using NovaWallet.IntegrationTests.Infrastructure;
 using Npgsql;
@@ -17,14 +16,14 @@ namespace NovaWallet.IntegrationTests;
 [Collection(LedgerCollection.Name)]
 public sealed class ConcurrencyTests(LedgerApiFixture fixture, ITestOutputHelper output)
 {
-    private readonly LedgerClient _operator = LedgerClient.Create(fixture.Factory, Roles.Operator);
+    private readonly LedgerClient _admin = fixture.Admin;
 
     private async Task<(LedgerClient Client, Guid WalletId)> NewFundedCustomerAsync(long balanceKobo)
     {
-        var client = LedgerClient.Create(fixture.Factory);
+        var client = await LedgerClient.CustomerAsync(fixture.Factory);
         var wallet = await client.CreateWalletAsync();
         if (balanceKobo > 0)
-            await (await _operator.CreditAsync(wallet.WalletId, balanceKobo)).EnsureStatusAsync(HttpStatusCode.Created);
+            await (await _admin.CreditAsync(wallet.WalletId, balanceKobo)).EnsureStatusAsync(HttpStatusCode.Created);
         return (client, wallet.WalletId);
     }
 

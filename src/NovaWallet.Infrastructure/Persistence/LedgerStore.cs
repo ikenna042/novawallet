@@ -1,6 +1,4 @@
-using System.Data;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 using NpgsqlTypes;
 using NovaWallet.Application.Abstractions;
@@ -10,13 +8,7 @@ namespace NovaWallet.Infrastructure.Persistence;
 
 public sealed class LedgerStore(LedgerDbContext db) : ILedgerStore
 {
-    public async Task<ILedgerTransactionScope> BeginAsync(CancellationToken ct)
-    {
-        // READ COMMITTED is enough because every balance decision is made while holding a row lock
-        // (SELECT ... FOR UPDATE); SERIALIZABLE would add retry handling without adding safety here.
-        var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
-        return new Scope(transaction);
-    }
+    public Task<ILedgerTransactionScope> BeginAsync(CancellationToken ct) => DbTransactionScope.BeginAsync(db, ct);
 
     public Task<Wallet?> FindWalletAsync(Guid walletId, CancellationToken ct) =>
         db.Wallets.AsNoTracking().SingleOrDefaultAsync(w => w.Id == walletId, ct);
@@ -150,12 +142,4 @@ public sealed class LedgerStore(LedgerDbContext db) : ILedgerStore
 
     private static string? Truncate(string? value, int max) =>
         value is { Length: var length } && length > max ? value[..max] : value;
-
-    private sealed class Scope(IDbContextTransaction transaction) : ILedgerTransactionScope
-    {
-        public Task CommitAsync(CancellationToken ct) => transaction.CommitAsync(ct);
-
-        // Disposing without a commit rolls back, which also releases every row lock taken in the transaction.
-        public ValueTask DisposeAsync() => transaction.DisposeAsync();
-    }
 }

@@ -1,16 +1,18 @@
+using System.Globalization;
 using System.Security.Claims;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using NovaWallet.Application;
+using NovaWallet.Application.Abstractions;
+using NovaWallet.Domain;
 
 namespace NovaWallet.Api.Auth;
 
-public static partial class AuthSetup
+public static class AuthSetup
 {
-    public const string OperatorPolicy = "Operator";
+    public const string AdminPolicy = "Admin";
 
     public static IServiceCollection AddLedgerAuth(this IServiceCollection services, IConfiguration configuration)
     {
@@ -22,7 +24,8 @@ public static partial class AuthSetup
                 "Jwt:Issuer and Jwt:Audience are required.")
             .ValidateOnStart();
 
-        services.AddSingleton<DevTokenIssuer>();
+        services.AddSingleton<JwtTokenIssuer>();
+        services.AddSingleton<ITokenIssuer>(sp => sp.GetRequiredService<JwtTokenIssuer>());
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
         services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
@@ -47,33 +50,50 @@ public static partial class AuthSetup
                     NameClaimType = ClaimNames.Subject,
                     RoleClaimType = ClaimNames.Role,
                 };
-                bearer.Events = new JwtBearerEvents
-                {
-                    OnTokenValidated = context =>
-                    {
-                        var subject = context.Principal?.FindFirstValue(ClaimNames.Subject);
-                        if (subject is null || !SubjectPattern().IsMatch(subject))
-                            context.Fail("Token has a missing or malformed 'sub' claim.");
-                        return Task.CompletedTask;
-                    },
-                };
+                bearer.Events = new JwtBearerEvents { OnTokenValidated = ValidateAgainstUserAsync };
             });
 
         services.AddAuthorizationBuilder()
             // Every endpoint requires a valid token unless it explicitly opts out.
             .SetFallbackPolicy(new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build())
-            .AddPolicy(OperatorPolicy, p => p.RequireAuthenticatedUser().RequireRole(Roles.Operator));
+            .AddPolicy(AdminPolicy, p => p.RequireAuthenticatedUser().RequireRole(Roles.Admin));
 
         return services;
+    }
+
+    /// <summary>
+    /// A valid signature isn't enough: the user must still exist, be active, and the token must carry the
+    /// user's current token version and role. This is what makes "disable user" and "change role" take effect
+    /// immediately instead of when the access token expires. Costs one primary-key lookup per request.
+    /// </summary>
+    private static async Task ValidateAgainstUserAsync(TokenValidatedContext context)
+    {
+        var principal = context.Principal!;
+        var subject = principal.FindFirstValue(ClaimNames.Subject);
+        var role = principal.FindFirstValue(ClaimNames.Role);
+        if (!Guid.TryParseExact(subject, "N", out var userId)
+            || !int.TryParse(principal.FindFirstValue(ClaimNames.TokenVersion), NumberStyles.None,
+                CultureInfo.InvariantCulture, out var version))
+        {
+            context.Fail("Token is missing required claims.");
+            return;
+        }
+
+        var users = context.HttpContext.RequestServices.GetRequiredService<IUserStore>();
+        var state = await users.GetAuthStateAsync(userId, context.HttpContext.RequestAborted);
+        if (state is null
+            || state.Status != UserStatus.Active
+            || state.TokenVersion != version
+            || AuthService.RoleName(state.Role) != role)
+        {
+            context.Fail("Token has been revoked.");
+        }
     }
 
     public static Actor ToActor(this ClaimsPrincipal user)
     {
         var subject = user.FindFirstValue(ClaimNames.Subject)
                       ?? throw new InvalidOperationException("Authenticated user has no subject.");
-        return new Actor(subject, user.IsInRole(Roles.Operator));
+        return new Actor(subject, user.IsInRole(Roles.Admin));
     }
-
-    [GeneratedRegex("^[A-Za-z0-9_-]{1,64}$")]
-    internal static partial Regex SubjectPattern();
 }
