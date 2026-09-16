@@ -25,6 +25,8 @@ That one command starts PostgreSQL and the API. Migrations run on startup.
 | Liveness / readiness | http://localhost:8080/health/live, http://localhost:8080/health/ready |
 | PostgreSQL (for inspecting tables) | `localhost:5433`, db/user `novawallet`, password `novawallet-local-only` |
 
+**Step-by-step manual testing,** mapped to every requirement: [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md).
+
 **End-to-end check.** With the stack running, this script exercises every capability (it needs `curl` and `jq`):
 
 ```bash

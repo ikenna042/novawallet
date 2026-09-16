@@ -41,6 +41,8 @@ builder.Services
         // so "100.50" or "100" (string) can never be coerced into a kobo amount.
         o.JsonSerializerOptions.UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow;
         o.JsonSerializerOptions.NumberHandling = JsonNumberHandling.Strict;
+        // Report which field is malformed without echoing internal .NET type names back to the caller.
+        o.AllowInputFormatterExceptionMessages = false;
     });
 
 builder.Services.AddProblemDetails(o => o.CustomizeProblemDetails = ctx =>
