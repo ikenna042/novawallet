@@ -1,0 +1,42 @@
+# `docker compose up` starts PostgreSQL and the API (http://localhost:8080/swagger).
+# Every value has a local-only default so no .env file is needed; see .env.example to override.
+name: novawallet
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: novawallet
+      POSTGRES_USER: novawallet
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-novawallet-local-only}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U novawallet -d novawallet"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    ports:
+      # Exposed so reviewers can inspect the ledger and audit tables with psql.
+      - "${DB_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8080}:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Ledger: "Host=db;Port=5432;Database=novawallet;Username=novawallet;Password=${POSTGRES_PASSWORD:-novawallet-local-only}"
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:-local-demo-signing-key-not-for-production-0123456789}
+      # Mock issuer so the panel can get tokens. Never enable this in a real environment.
+      Jwt__EnableDevTokenIssuer: "true"
+      Database__MigrateOnStartup: "true"
+      Swagger__Enabled: "true"
+      Ledger__DailyTransferLimitKobo: ${DAILY_TRANSFER_LIMIT_KOBO:-50000000}
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Build and test (unit + PostgreSQL integration)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet restore
+      - run: dotnet build --no-restore -c Release
+      # Integration tests start PostgreSQL via Testcontainers (Docker is available on the runner).
+      - run: >
+          dotnet test --no-build -c Release
+          --logger "trx;LogFilePrefix=results"
+          --logger "console;verbosity=normal"
+          --results-directory TestResults
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: TestResults
+
+  compose-smoke:
+    name: docker compose up + smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Exactly what the panel will run.
+      - run: docker compose up -d --build
+      - run: ./scripts/smoke-test.sh http://localhost:8080
+      - if: failure()
+        run: docker compose logs
+      - if: always()
+        run: docker compose down -v

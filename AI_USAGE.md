@@ -1,0 +1,79 @@
+# AI usage
+
+This task was built with an AI coding agent working under my direction. This file records what it did, what I asked for, and, most importantly, where its output was wrong or naive for a financial system and how that was caught.
+
+## Tools and what they were used for
+
+| Tool | Used for |
+|---|---|
+| **Claude Code** (desktop app, Claude Opus 5 model) | Reading the brief, proposing the plan, scaffolding the solution, writing code, tests, Dockerfile, CI, README and the presentation deck. It also ran the builds, the tests and a local PostgreSQL. |
+| .NET 8 SDK, xUnit, Testcontainers | Checking every change the AI made: build with warnings-as-errors, 45 unit tests, 46 integration tests against real PostgreSQL 16. |
+
+My role was to set scope and constraints, make the judgement calls, and require evidence (tests and deliberately broken code) before accepting a claim.
+
+## Prompts I gave and what came back
+
+1. **The brief itself.** I pasted the recruiter's email and attached the take-home PDF.
+   - **What came back:** a plan, not code. The agent noticed that the email asks for a PowerPoint while the PDF asks for a Git repo, and asked which I wanted. It found that .NET and Docker were not installed and asked how to handle that. It then proposed:
+     - integer kobo;
+     - `SELECT … FOR UPDATE` with a fixed lock order;
+     - idempotency keys claimed with `INSERT … ON CONFLICT` inside the same transaction;
+     - a per-wallet hash-chained audit table protected by triggers;
+     - an outbox, plus tests that fire 200 concurrent requests.
+   - **My decisions:** I chose "code repo + deck", and I approved the plan before any code was written.
+
+2. **"Docker is too heavy, how can I continue without it"**
+   - **What came back:** install the .NET 8 SDK user-locally with Microsoft's `dotnet-install.sh` (after asking me first). Make the integration tests use Testcontainers when Docker exists (CI), otherwise a connection string in `NOVAWALLET_TEST_DB`. Let GitHub Actions prove that `docker compose up` works.
+   - **My decisions:** for a local database I chose the `@embedded-postgres/darwin-arm64` binaries (PostgreSQL 16.14) run from a scratch folder, so nothing was installed system-wide.
+
+3. **Choosing the local database:** I answered the agent's question with **"npm embedded-postgres"**.
+   - **What came back:** it downloaded the package into a scratch folder and initialised a TCP-only PostgreSQL 16.14 server (its first attempt failed because the macOS socket path was too long). It then ran all 46 integration tests against that server.
+   - **Unprompted extra step:** after the suite went green, the agent deleted `FOR UPDATE`, re-ran the concurrency tests and restored it, then did the same with the lock ordering. This showed the tests fail for the right reason. I kept the results as evidence (section 5 below and the README).
+
+## Where the AI was wrong or naive, and how it was caught
+
+### 1. Error responses silently stopped being Problem Details (caught by a test)
+The generated controllers carried `[Produces("application/json")]`. That looks harmless, but it overrides the content type of ASP.NET's automatic 400 validation responses. So a request with `"amountKobo": 100.5` came back as `application/json` instead of `application/problem+json`, which broke the "consistent structured errors" constraint.
+
+- **How it was caught:** `Malformed_transfer_requests_are_rejected_with_problem_details` asserts the media type, and 5 of its 7 cases failed on the first run.
+- **Fix:** removed the attribute (JSON is the only formatter anyway).
+
+### 2. Every declined transfer was logged as an unhandled server error (caught by reading logs)
+The first version turned business rejections (insufficient funds, daily limit) into Problem Details through a global `IExceptionHandler`. The tests all passed. But running the service and reading its log showed that .NET 8's exception middleware logs **every** exception that reaches it at `Error` level, with a full stack trace, before any handler runs.
+
+In a bank that means every declined transfer looks like an incident. It would flood alerting and hide real failures.
+
+- **Fix:** a `DomainExceptionFilter` handles expected rejections inside MVC and logs them at `Information`. The global handler remains only for genuinely unexpected failures.
+- **Re-check:** after the fix, a full smoke run produced **0** error-level log lines.
+
+### 3. Tests that "checked" the wrong rule (caught when they failed for an unexpected reason)
+Twice the AI wrote a check for *insufficient funds* using an amount that also exceeded the **daily limit**:
+- a unit test used ₦2,000,000;
+- the smoke script used ₦999,999.99.
+
+The limit check runs first, so the service correctly answered `daily_limit_exceeded`, and the assertions failed. The service was right; the tests were naive about rule ordering. Worse, a test like this could pass for the wrong reason if the expectation were loosened to "any 422".
+
+- **Fix:** the insufficient-funds cases now overdraw by exactly one kobo (or spend from an empty wallet), well under the limit.
+
+### 4. Things caught in review before they could bite
+None of these produced a failure, because they were addressed while writing the code. I list them because each is a plausible AI-generated bug in a ledger:
+- **Stale balance after locking.** EF Core returns an *already-tracked* entity unchanged, even after `SELECT … FOR UPDATE` reloads the row. A wallet loaded before being locked would therefore carry a stale balance, silently defeating the lock. `LockWalletAsync` now refuses to lock a wallet that is already tracked.
+- **Audit hashes that can't verify.** .NET timestamps have 100 ns precision but PostgreSQL stores microseconds. Hashing the in-memory timestamp would make every audit record fail verification after a round trip. Timestamps are truncated to microseconds (`GetLedgerNow`), and an integration test verifies the chain *after* reading it back from the database.
+- **Retry policy.** `EnableRetryOnFailure`, a commonly suggested EF setting, is incompatible with explicit transactions, so it was deliberately left out.
+- **Config read too early.** The first drafts read the connection string and rate limits while registering services. With minimal hosting, that can ignore configuration added later by a test host, so both are now resolved lazily.
+- **Leaking the recipient's balance.** The obvious receipt shape returns both balances after a transfer, which would tell a sender the recipient's balance. The receipt returns only the caller's side.
+
+### 5. What "naive" looks like, measured
+The classic generated transfer is: read the balance, check it, update it, all without a lock. To show why that is unacceptable here, the agent removed `FOR UPDATE` and re-ran the concurrency suite:
+
+| Mutation | Outcome |
+|---|---|
+| No row lock | **199 of 200** ₦100 transfers "succeeded" from a ₦1,000 wallet (lost updates); all 40 transfers passed a ₦500k daily limit that should have stopped 15; 4 of 5 concurrency tests failed |
+| No lock ordering | PostgreSQL `40P01 deadlock detected` under opposing transfers |
+
+The locks were restored, and the full suite (91 tests) passes again.
+
+## What I took away
+- AI was fastest at boilerplate (EF mappings, Problem Details plumbing, Swagger, Dockerfile, CI) and at producing a broad first test list.
+- It needed direction on the parts that matter most in a ledger: lock scope and ordering, what goes in the same transaction, what to cache for idempotency, and what gets logged.
+- Tests only earn trust once you have seen them fail for the right reason, hence the deliberate mutations.

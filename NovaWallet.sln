@@ -1,0 +1,64 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{D5DF18F9-115A-4823-AD69-2F7C0482CC24}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NovaWallet.Api", "src\NovaWallet.Api\NovaWallet.Api.csproj", "{3AD73612-6C3B-407D-B775-E50E04849177}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NovaWallet.Application", "src\NovaWallet.Application\NovaWallet.Application.csproj", "{63999EA8-26E8-42BD-89AD-7A1F4F970A18}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NovaWallet.Domain", "src\NovaWallet.Domain\NovaWallet.Domain.csproj", "{16C7C746-F3FE-4714-B7A3-992773854A76}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NovaWallet.Infrastructure", "src\NovaWallet.Infrastructure\NovaWallet.Infrastructure.csproj", "{D6DA2942-57F0-4352-930E-248A846A204C}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{CB08D304-6CFC-4124-B2D5-57AE6A78010C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NovaWallet.IntegrationTests", "tests\NovaWallet.IntegrationTests\NovaWallet.IntegrationTests.csproj", "{22FDA33D-8CE6-4C93-9191-F5065152DCB9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NovaWallet.UnitTests", "tests\NovaWallet.UnitTests\NovaWallet.UnitTests.csproj", "{CD979A2B-7E46-42CA-8BEC-36B19920A53F}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{3AD73612-6C3B-407D-B775-E50E04849177}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3AD73612-6C3B-407D-B775-E50E04849177}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3AD73612-6C3B-407D-B775-E50E04849177}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3AD73612-6C3B-407D-B775-E50E04849177}.Release|Any CPU.Build.0 = Release|Any CPU
+		{63999EA8-26E8-42BD-89AD-7A1F4F970A18}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{63999EA8-26E8-42BD-89AD-7A1F4F970A18}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{63999EA8-26E8-42BD-89AD-7A1F4F970A18}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{63999EA8-26E8-42BD-89AD-7A1F4F970A18}.Release|Any CPU.Build.0 = Release|Any CPU
+		{16C7C746-F3FE-4714-B7A3-992773854A76}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{16C7C746-F3FE-4714-B7A3-992773854A76}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{16C7C746-F3FE-4714-B7A3-992773854A76}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{16C7C746-F3FE-4714-B7A3-992773854A76}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D6DA2942-57F0-4352-930E-248A846A204C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D6DA2942-57F0-4352-930E-248A846A204C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D6DA2942-57F0-4352-930E-248A846A204C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D6DA2942-57F0-4352-930E-248A846A204C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{22FDA33D-8CE6-4C93-9191-F5065152DCB9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{22FDA33D-8CE6-4C93-9191-F5065152DCB9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{22FDA33D-8CE6-4C93-9191-F5065152DCB9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{22FDA33D-8CE6-4C93-9191-F5065152DCB9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CD979A2B-7E46-42CA-8BEC-36B19920A53F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CD979A2B-7E46-42CA-8BEC-36B19920A53F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CD979A2B-7E46-42CA-8BEC-36B19920A53F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CD979A2B-7E46-42CA-8BEC-36B19920A53F}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{3AD73612-6C3B-407D-B775-E50E04849177} = {D5DF18F9-115A-4823-AD69-2F7C0482CC24}
+		{63999EA8-26E8-42BD-89AD-7A1F4F970A18} = {D5DF18F9-115A-4823-AD69-2F7C0482CC24}
+		{16C7C746-F3FE-4714-B7A3-992773854A76} = {D5DF18F9-115A-4823-AD69-2F7C0482CC24}
+		{D6DA2942-57F0-4352-930E-248A846A204C} = {D5DF18F9-115A-4823-AD69-2F7C0482CC24}
+		{22FDA33D-8CE6-4C93-9191-F5065152DCB9} = {CB08D304-6CFC-4124-B2D5-57AE6A78010C}
+		{CD979A2B-7E46-42CA-8BEC-36B19920A53F} = {CB08D304-6CFC-4124-B2D5-57AE6A78010C}
+	EndGlobalSection
+EndGlobal
