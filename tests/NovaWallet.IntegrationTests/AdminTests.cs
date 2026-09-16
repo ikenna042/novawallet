@@ -46,11 +46,11 @@ public sealed class AdminTests(LedgerApiFixture fixture)
     {
         var (customer, wallet) = await FundedCustomerAsync(7_500_00);
 
-        var page = (await Admin.Http.GetFromJsonAsync<UserPage>($"/api/v1/admin/users?email={customer.Email}"))!;
+        var page = (await Admin.Http.GetDataAsync<UserPage>($"/api/v1/admin/users?email={customer.Email}"))!;
         var found = Assert.Single(page.Items);
         Assert.Equal((customer.UserId, wallet), (found.UserId, found.WalletId!.Value));
 
-        var byId = (await Admin.Http.GetFromJsonAsync<UserProfile>($"/api/v1/admin/users/{customer.UserId}"))!;
+        var byId = (await Admin.Http.GetDataAsync<UserProfile>($"/api/v1/admin/users/{customer.UserId}"))!;
         Assert.Equal("customer", byId.Role);
 
         Assert.Equal(7_500_00, await Admin.GetBalanceAsync(wallet));
@@ -65,10 +65,10 @@ public sealed class AdminTests(LedgerApiFixture fixture)
         for (var i = 0; i < 3; i++)
             await LedgerClient.CustomerAsync(fixture.Factory, email: $"page{i}-{tag}@example.test");
 
-        var first = (await Admin.Http.GetFromJsonAsync<UserPage>($"/api/v1/admin/users?email={tag}&limit=2"))!;
+        var first = (await Admin.Http.GetDataAsync<UserPage>($"/api/v1/admin/users?email={tag}&limit=2"))!;
         Assert.Equal(2, first.Items.Count);
         Assert.NotNull(first.NextCursor);
-        var second = (await Admin.Http.GetFromJsonAsync<UserPage>(
+        var second = (await Admin.Http.GetDataAsync<UserPage>(
             $"/api/v1/admin/users?email={tag}&limit=2&cursor={Uri.EscapeDataString(first.NextCursor!)}"))!;
         Assert.Single(second.Items);
         Assert.Null(second.NextCursor);
@@ -84,7 +84,7 @@ public sealed class AdminTests(LedgerApiFixture fixture)
 
         var disabled = await Post(Admin, $"/api/v1/admin/users/{customer.UserId}/disable", new { reason = "Suspected account takeover" });
         await disabled.EnsureStatusAsync(HttpStatusCode.OK);
-        Assert.Equal("Disabled", (await disabled.Content.ReadFromJsonAsync<UserProfile>())!.Status);
+        Assert.Equal("Disabled", (await disabled.ReadDataAsync<UserProfile>()).Status);
 
         // The access token is still unexpired, but it no longer works...
         Assert.Equal(HttpStatusCode.Unauthorized, (await customer.Http.GetAsync("/api/v1/auth/me")).StatusCode);
@@ -109,7 +109,7 @@ public sealed class AdminTests(LedgerApiFixture fixture)
 
         var promoted = await Post(Admin, $"/api/v1/admin/users/{customer.UserId}/role", new { role = "admin" });
         await promoted.EnsureStatusAsync(HttpStatusCode.OK);
-        Assert.Equal("admin", (await promoted.Content.ReadFromJsonAsync<UserProfile>())!.Role);
+        Assert.Equal("admin", (await promoted.ReadDataAsync<UserProfile>()).Role);
 
         Assert.Equal(HttpStatusCode.Unauthorized, (await customer.Http.GetAsync("/api/v1/auth/me")).StatusCode);
 
@@ -154,7 +154,7 @@ public sealed class AdminTests(LedgerApiFixture fixture)
 
         var frozen = await Post(Admin, $"/api/v1/admin/wallets/{aliceWallet}/freeze", new { reason = "Chargeback dispute #4471" });
         await frozen.EnsureStatusAsync(HttpStatusCode.OK);
-        var state = (await frozen.Content.ReadFromJsonAsync<WalletResponse>())!;
+        var state = (await frozen.ReadDataAsync<WalletResponse>());
         Assert.Equal(("Frozen", "Chargeback dispute #4471"), (state.Status, state.FrozenReason));
 
         var outbound = await alice.TransferAsync(aliceWallet, bobWallet, 1_00, Guid.NewGuid().ToString());
@@ -164,7 +164,7 @@ public sealed class AdminTests(LedgerApiFixture fixture)
         await (await bob.TransferAsync(bobWallet, aliceWallet, 2_00, Guid.NewGuid().ToString())).EnsureStatusAsync(HttpStatusCode.Created);
         await (await Admin.CreditAsync(aliceWallet, 3_00)).EnsureStatusAsync(HttpStatusCode.Created);
         Assert.Equal(10_005_00, await alice.GetBalanceAsync(aliceWallet));
-        Assert.Equal("Frozen", (await alice.Http.GetFromJsonAsync<WalletResponse>($"/api/v1/wallets/{aliceWallet}"))!.Status);
+        Assert.Equal("Frozen", (await alice.Http.GetDataAsync<WalletResponse>($"/api/v1/wallets/{aliceWallet}"))!.Status);
 
         await (await Post(Admin, $"/api/v1/admin/wallets/{aliceWallet}/unfreeze")).EnsureStatusAsync(HttpStatusCode.OK);
         await (await alice.TransferAsync(aliceWallet, bobWallet, 1_00, Guid.NewGuid().ToString())).EnsureStatusAsync(HttpStatusCode.Created);
@@ -185,7 +185,7 @@ public sealed class AdminTests(LedgerApiFixture fixture)
         await (await Post(Admin, $"/api/v1/admin/wallets/{wallet}/freeze", new { reason = "KYC review" })).EnsureStatusAsync(HttpStatusCode.OK);
         await (await Post(Admin, $"/api/v1/admin/users/{customer.UserId}/disable", new { reason = "KYC review" })).EnsureStatusAsync(HttpStatusCode.OK);
 
-        var log = (await Admin.Http.GetFromJsonAsync<AdminActionPage>("/api/v1/admin/actions?limit=50"))!;
+        var log = (await Admin.Http.GetDataAsync<AdminActionPage>("/api/v1/admin/actions?limit=50"))!;
         var mine = log.Items.Where(a => a.TargetId == wallet.ToString() || a.TargetId == customer.Subject).ToList();
         Assert.Equal(new[] { "USER_DISABLED", "WALLET_FROZEN" }, mine.Select(a => a.Action));
         Assert.All(mine, a => Assert.Equal((Admin.Subject, "KYC review"), (a.ActorId, a.Detail)));

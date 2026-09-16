@@ -14,8 +14,8 @@ namespace NovaWallet.Api.Controllers;
 [ApiController]
 [Route("api/v1/admin")]
 [Authorize(Policy = AuthSetup.AdminPolicy)]
-[ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
-[ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+[ProducesResponseType<ApiError>(StatusCodes.Status401Unauthorized)]
+[ProducesResponseType<ApiError>(StatusCodes.Status403Forbidden)]
 public sealed class AdminController(AdminService admin) : ControllerBase
 {
     public sealed record ReasonRequest([Required, StringLength(200)] string? Reason);
@@ -24,29 +24,33 @@ public sealed class AdminController(AdminService admin) : ControllerBase
 
     /// <summary>List users ordered by email. <c>email</c> filters by substring; pass <c>nextCursor</c> as <c>cursor</c>.</summary>
     [HttpGet("users")]
-    [ProducesResponseType<UserPage>(StatusCodes.Status200OK)]
+    [ApiMessage("Users retrieved")]
+    [ProducesResponseType<ApiResponse<UserPage>>(StatusCodes.Status200OK)]
     public Task<UserPage> ListUsers(
         [FromQuery] string? email, [FromQuery] int? limit, [FromQuery] string? cursor, CancellationToken ct) =>
         admin.ListUsersAsync(User.ToActor(), email, limit, cursor, ct);
 
     /// <summary>A user's profile, status, role and wallet id (use the wallet endpoints to see balance and statement).</summary>
     [HttpGet("users/{userId:guid}")]
-    [ProducesResponseType<UserProfile>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ApiMessage("User retrieved")]
+    [ProducesResponseType<ApiResponse<UserProfile>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ApiError>(StatusCodes.Status404NotFound)]
     public Task<UserProfile> GetUser(Guid userId, CancellationToken ct) =>
         admin.GetUserAsync(User.ToActor(), userId, ct);
 
     /// <summary>Disable an account: sign-in is refused and existing tokens stop working immediately.</summary>
     [HttpPost("users/{userId:guid}/disable")]
-    [ProducesResponseType<UserProfile>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ApiMessage("User disabled")]
+    [ProducesResponseType<ApiResponse<UserProfile>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ApiError>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ApiError>(StatusCodes.Status409Conflict)]
     public Task<UserProfile> DisableUser(Guid userId, [FromBody] ReasonRequest request, CancellationToken ct) =>
         admin.DisableUserAsync(User.ToActor(), userId, request.Reason, HttpContext.GetCorrelationId(), ct);
 
     [HttpPost("users/{userId:guid}/enable")]
-    [ProducesResponseType<UserProfile>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ApiMessage("User enabled")]
+    [ProducesResponseType<ApiResponse<UserProfile>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ApiError>(StatusCodes.Status404NotFound)]
     public Task<UserProfile> EnableUser(Guid userId, CancellationToken ct) =>
         admin.EnableUserAsync(User.ToActor(), userId, HttpContext.GetCorrelationId(), ct);
 
@@ -55,28 +59,32 @@ public sealed class AdminController(AdminService admin) : ControllerBase
     /// You can't demote yourself, and at least one active admin must remain.
     /// </summary>
     [HttpPost("users/{userId:guid}/role")]
-    [ProducesResponseType<UserProfile>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ApiMessage("Role updated")]
+    [ProducesResponseType<ApiResponse<UserProfile>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ApiError>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ApiError>(StatusCodes.Status409Conflict)]
     public Task<UserProfile> ChangeRole(Guid userId, [FromBody] RoleRequest request, CancellationToken ct) =>
         admin.ChangeRoleAsync(User.ToActor(), userId, request.Role, HttpContext.GetCorrelationId(), ct);
 
     /// <summary>Put a debit hold on a wallet: outbound transfers are refused with 422 wallet_frozen; credits still land.</summary>
     [HttpPost("wallets/{walletId:guid}/freeze")]
-    [ProducesResponseType<WalletResponse>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ApiMessage("Wallet frozen")]
+    [ProducesResponseType<ApiResponse<WalletResponse>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ApiError>(StatusCodes.Status404NotFound)]
     public Task<WalletResponse> FreezeWallet(Guid walletId, [FromBody] ReasonRequest request, CancellationToken ct) =>
         admin.FreezeWalletAsync(User.ToActor(), walletId, request.Reason, HttpContext.GetCorrelationId(), ct);
 
     [HttpPost("wallets/{walletId:guid}/unfreeze")]
-    [ProducesResponseType<WalletResponse>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ApiMessage("Wallet unfrozen")]
+    [ProducesResponseType<ApiResponse<WalletResponse>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ApiError>(StatusCodes.Status404NotFound)]
     public Task<WalletResponse> UnfreezeWallet(Guid walletId, CancellationToken ct) =>
         admin.UnfreezeWalletAsync(User.ToActor(), walletId, HttpContext.GetCorrelationId(), ct);
 
     /// <summary>The append-only log of administrative actions, newest first.</summary>
     [HttpGet("actions")]
-    [ProducesResponseType<AdminActionPage>(StatusCodes.Status200OK)]
+    [ApiMessage("Admin actions retrieved")]
+    [ProducesResponseType<ApiResponse<AdminActionPage>>(StatusCodes.Status200OK)]
     public Task<AdminActionPage> ListActions([FromQuery] int? limit, [FromQuery] string? cursor, CancellationToken ct) =>
         admin.ListActionsAsync(User.ToActor(), limit, cursor, ct);
 }

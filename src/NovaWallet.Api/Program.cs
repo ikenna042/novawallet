@@ -1,6 +1,6 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using NovaWallet.Api.Auth;
@@ -35,7 +35,11 @@ builder.Services
     .AddLedgerRateLimiting(builder.Configuration);
 
 builder.Services
-    .AddControllers(o => o.Filters.Add<DomainExceptionFilter>())
+    .AddControllers(o =>
+    {
+        o.Filters.Add<DomainExceptionFilter>();
+        o.Filters.Add<ApiEnvelopeResultFilter>();
+    })
     .AddJsonOptions(o =>
     {
         // Reject unknown fields (catches typos like "amount" instead of "amountKobo") and keep numbers strict,
@@ -46,9 +50,13 @@ builder.Services
         o.AllowInputFormatterExceptionMessages = false;
     });
 
+// Every error, wherever it is produced, gets the { statusCode, message, data, ...RFC 7807 } shape. Writers are
+// tried in registration order and AddControllers() already registered MVC's own writer, so ours goes first.
+builder.Services.Insert(0, ServiceDescriptor.Singleton<IProblemDetailsWriter, EnvelopeProblemDetailsWriter>());
 builder.Services.AddProblemDetails(o => o.CustomizeProblemDetails = ctx =>
 {
     ctx.ProblemDetails.Instance ??= ctx.HttpContext.Request.Path;
+    ApiEnvelope.Normalize(ctx.ProblemDetails);
     ctx.ProblemDetails.Extensions["traceId"] = System.Diagnostics.Activity.Current?.TraceId.ToString()
                                                ?? ctx.HttpContext.TraceIdentifier;
     ctx.ProblemDetails.Extensions["correlationId"] = ctx.HttpContext.GetCorrelationId();
@@ -119,19 +127,23 @@ app.UseRateLimiter();
 
 app.MapControllers();
 
-app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false }).AllowAnonymous();
-app.MapHealthChecks("/health/ready", new HealthCheckOptions
-{
-    Predicate = check => check.Tags.Contains("ready"),
-    ResponseWriter = async (context, report) =>
-    {
-        context.Response.ContentType = "application/json";
-        await JsonSerializer.SerializeAsync(context.Response.Body, new
+// Probes only look at the status code (200 / 503); the body uses the same envelope for humans.
+static Task WriteHealth(HttpContext context, HealthReport report) =>
+    context.Response.WriteAsJsonAsync(ApiEnvelope.Success(
+        context.Response.StatusCode,
+        report.Status.ToString(),
+        new
         {
             status = report.Status.ToString(),
             checks = report.Entries.ToDictionary(e => e.Key, e => e.Value.Status.ToString()),
-        });
-    },
+        }));
+
+app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false, ResponseWriter = WriteHealth })
+    .AllowAnonymous();
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+    ResponseWriter = WriteHealth,
 }).AllowAnonymous();
 
 app.MapGet("/", () => Results.Redirect("/swagger")).AllowAnonymous().ExcludeFromDescription();
