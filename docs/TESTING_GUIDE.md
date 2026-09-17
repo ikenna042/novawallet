@@ -83,7 +83,7 @@ Expected:
 | Also try | Expected |
 |---|---|
 | Register the same email again (any letter case) | **409** `email_already_registered` |
-| Password `short1`, `onlyletters`, or `1234567890123` | **400** `validation_error` (10–128 characters, with a letter and a digit) |
+| Password `short1`, `onlyletters`, or `1234567890123` | **400** `validation_error` (8–128 characters, with a letter and a digit) |
 | Register with an extra `"role":"admin"` field | **400**: unknown fields are refused |
 | Sign in with a wrong password, then with an email that doesn't exist | Both **401** with an identical body (`invalid_credentials`), so emails can't be probed |
 | Five wrong passwords in a row, then the right one | Still **401**: the account is locked for 15 minutes |

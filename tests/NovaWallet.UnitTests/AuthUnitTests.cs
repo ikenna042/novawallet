@@ -25,7 +25,7 @@ public class CredentialsTests
         Assert.Throws<RequestValidationException>(() => Credentials.Email(email));
 
     [Theory]
-    [InlineData("Abcdefgh1")]            // 9 characters
+    [InlineData("Abcdef1")]              // 7 characters
     [InlineData("abcdefghijk")]          // no digit
     [InlineData("12345678901")]          // no letter
     [InlineData("Abcdefghi1\n")]         // control character
@@ -33,8 +33,8 @@ public class CredentialsTests
         Assert.Throws<RequestValidationException>(() => Credentials.Password(password));
 
     [Fact]
-    public void Ten_character_password_with_letter_and_digit_is_accepted() =>
-        Assert.Equal("Abcdefghi1", Credentials.Password("Abcdefghi1"));
+    public void Eight_character_password_with_letter_and_digit_is_accepted() =>
+        Assert.Equal("Abcdefg1", Credentials.Password("Abcdefg1"));
 
     [Fact]
     public void Refresh_tokens_are_random_and_only_their_hash_is_kept()

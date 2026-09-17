@@ -7,7 +7,7 @@ namespace NovaWallet.Application;
 
 public static partial class Credentials
 {
-    public const int MinPasswordLength = 10;
+    public const int MinPasswordLength = 8;
     public const int MaxPasswordLength = 128;
     public const int MaxEmailLength = 254;
     public const int MaxFullNameLength = 100;

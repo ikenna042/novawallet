@@ -132,7 +132,7 @@ All endpoints need a JWT bearer token except sign-up, sign-in, token refresh, he
 
 | Method | Path | Who | Notes |
 |---|---|---|---|
-| POST | `/api/v1/auth/register` | anonymous | Creates a **customer** (never an admin). Password: 10–128 chars, at least one letter and one digit |
+| POST | `/api/v1/auth/register` | anonymous | Creates a **customer** (never an admin). Password: 8–128 chars, at least one letter and one digit |
 | POST | `/api/v1/auth/login` | anonymous | Returns a 15-minute `accessToken` and a 7-day `refreshToken`. Every failure is the same 401 `invalid_credentials`; 5 wrong passwords lock the account for 15 minutes |
 | POST | `/api/v1/auth/refresh` | anonymous | Rotates the refresh token. Reusing an old one revokes the whole session |
 | POST | `/api/v1/auth/logout` | signed in | Revokes the session the refresh token belongs to |

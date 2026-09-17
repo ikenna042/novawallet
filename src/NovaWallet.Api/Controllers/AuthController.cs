@@ -22,7 +22,7 @@ public sealed class AuthController(AuthService auth) : ControllerBase
     public sealed record RefreshRequest([Required, StringLength(128)] string? RefreshToken);
 
     /// <summary>
-    /// Create a customer account. Password: 10-128 characters with at least one letter and one digit.
+    /// Create a customer account. Password: 8-128 characters with at least one letter and one digit.
     /// Administrators can't be created here; they are seeded or promoted by another admin.
     /// </summary>
     [HttpPost("register")]
