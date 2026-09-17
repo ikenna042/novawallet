@@ -7,7 +7,7 @@ This task was built with an AI coding agent working under my direction. This fil
 | Tool | Used for |
 |---|---|
 | **Claude Code** (desktop app, Claude Opus 5 model) | Reading the brief, proposing the plan, scaffolding the solution, writing code, tests, Dockerfile, CI, README and the presentation deck. It also ran the builds, the tests and a local PostgreSQL. |
-| .NET 8 SDK, xUnit, Testcontainers | Checking every change the AI made: build with warnings-as-errors, 75 unit tests, 76 integration tests against real PostgreSQL 16. |
+| .NET 8 SDK, xUnit, Testcontainers | Checking every change the AI made: build with warnings-as-errors, 75 unit tests, 78 integration tests against real PostgreSQL 16. |
 | OrbStack (Docker) | Running `docker compose up` locally and the smoke script against it. |
 
 My role was to set scope and constraints, make the judgement calls, and require evidence (tests and deliberately broken code) before accepting a claim.
@@ -29,7 +29,7 @@ My role was to set scope and constraints, make the judgement calls, and require 
 
 3. **Choosing the local database:** I answered the agent's question with **"npm embedded-postgres"**.
    - **What came back:** it downloaded the package into a scratch folder and initialised a TCP-only PostgreSQL 16.14 server (its first attempt failed because the macOS socket path was too long). It then ran all 46 integration tests against that server.
-   - **Unprompted extra step:** after the suite went green, the agent deleted `FOR UPDATE`, re-ran the concurrency tests and restored it, then did the same with the lock ordering. This showed the tests fail for the right reason. I kept the results as evidence (section 7 below and the README).
+   - **Unprompted extra step:** after the suite went green, the agent deleted `FOR UPDATE`, re-ran the concurrency tests and restored it, then did the same with the lock ordering. This showed the tests fail for the right reason. I kept the results as evidence (section 8 below and the README).
 
 4. **"I want guide on how to test the api and how it covers the requirements"**
    - **What came back:** `docs/TESTING_GUIDE.md`, with every command executed against the running stack before it was written down. That run exposed the leak described in case 4 below.
@@ -37,12 +37,15 @@ My role was to set scope and constraints, make the judgement calls, and require 
 5. **"Why do I have to use /dev/token to create token… I want to have real users authentication flow including admin flow"**
    - **What came back:** first an explanation (the brief allows a mock issuer, and the mock tokens were already real, fully validated JWTs), then a design with choices for me to make.
    - **My decisions:** auth built into the service rather than a Keycloak container (to keep my 8 GB laptop light); the first admin seeded from environment variables; `/dev/token` removed; admins can credit wallets, read audit trails, manage users, view any wallet and freeze wallets.
-   - The agent then built register / login / refresh / logout and the admin endpoints, growing the suite from 91 to 148 tests, and repeated the "break it on purpose" check on the new security code (section 7).
+   - The agent then built register / login / refresh / logout and the admin endpoints, growing the suite from 91 to 148 tests, and repeated the "break it on purpose" check on the new security code (section 8).
 
 6. **"For transfer, I am seeing source and destination wallets, why not pick the logged in user as source to avoid another user transferring from another account. Plus what is the Idempotency key field"**
    - **What came back:** confirmation that the old design was already safe (a non-owner got 404, and a test covered it), but that my suggestion was better. Each customer has one wallet, so the source should come from the token and the request shouldn't be able to name one. Also an explanation of the `Idempotency-Key` header, which is now in the Swagger description too.
    - **Honest note:** the AI's original API accepted a client-supplied `sourceWalletId` and relied on an ownership check. It worked, but it left an unnecessary way to ask for someone else's money. My review removed it: a body containing `sourceWalletId` is now refused with 400, and there's a test for it.
    - In the same step I asked to revert an earlier `{ statusCode, message, data }` response wrapper (it's reverted in git history) so every response stays plain resources plus RFC 7807 errors, as the brief recommends.
+
+7. **"I just registered 2 new users, and I saw that the wallets are null, at what point is the wallet created?"**, then, after testing wallet creation in Swagger myself: **"I tried to create wallet for the logged in user but it is failing with the error"** (403 Forbidden, "Customers can only create a wallet for themselves.")
+   - **What came back:** the first question was answered directly (registration only creates the user; a wallet needs a separate `POST /api/v1/wallets` call — by design). The second was a real bug I found by using the app myself, not something the AI's own tests had caught. See finding 6 below.
 
 ## Where the AI was wrong or naive, and how it was caught
 
@@ -84,7 +87,15 @@ Worse, the expansion also split the arguments of the `expect` helper. It ended u
 - **Fix:** every JSON body in the script is now built with `jq`.
 - **Re-check:** all 30 checks pass on both an upgraded database and a fresh `docker compose down -v && up`.
 
-### 6. Things caught in review before they could bite
+### 6. `customerId` silently rejected a caller's own id when copied from the API's own output (caught by the user, using the app)
+`POST /api/v1/wallets` lets a caller optionally name a `customerId`, defaulting to their own id. Internally, "own id" was computed as the JWT `sub` claim — a GUID rendered *without* dashes (`3a55b694117342fe...`) — and compared with a plain string equality check. But every GUID the API shows the caller anywhere else (`GET /auth/me`, `GET /admin/users`, `walletId`, …) is a `Guid`, which JSON-serializes *with* dashes. A caller who copies their own `userId` from `/me` and pastes it into `customerId` — the natural thing to do when a form shows that field — gets `403 Forbidden: Customers can only create a wallet for themselves`, for an id that genuinely is their own. The same mismatch would have hit an admin assigning a wallet to a `userId` copied from `/admin/users`.
+
+- **How it was caught:** Ikenna tried it in Swagger while testing the app, not by a test — none of the existing tests supplied a *dashed* GUID, so the format mismatch was invisible to the suite.
+- **Fix:** `WalletService.CreateAsync` now parses `customerId` with `Guid.TryParse` (accepts any standard GUID format) and compares/looks it up by the parsed `Guid` value, never by raw string. The now-unused strict-format validator (`RequestGuard.CustomerId`) was deleted rather than left as dead code.
+- **New tests:** one registers a wallet with `customerId` in the dashed format for both a customer (self) and an admin (someone else), and one checks a non-GUID `customerId` still gets a clear 400.
+- **Lesson:** an internal "canonical string format" (here, dashless GUIDs used as JWT subjects) is exactly the kind of detail that string-equality checks quietly assume and that only shows up once a real user, not a test fixture, supplies the "obvious" alternative format.
+
+### 7. Things caught in review before they could bite
 None of these produced a failure, because they were addressed while writing the code. I list them because each is a plausible AI-generated bug in a ledger:
 - **Stale balance after locking.** EF Core returns an *already-tracked* entity unchanged, even after `SELECT … FOR UPDATE` reloads the row. A wallet loaded before being locked would therefore carry a stale balance, silently defeating the lock. `LockWalletAsync` now refuses to lock a wallet that is already tracked.
 - **Audit hashes that can't verify.** .NET timestamps have 100 ns precision but PostgreSQL stores microseconds. Hashing the in-memory timestamp would make every audit record fail verification after a round trip. Timestamps are truncated to microseconds (`GetLedgerNow`), and an integration test verifies the chain *after* reading it back from the database.
@@ -95,7 +106,7 @@ None of these produced a failure, because they were addressed while writing the 
 - **Revocation that only happens at expiry.** A JWT stays valid until it expires, so "disable user" would take up to 15 minutes to bite. Each request now checks the user's status, role and `token_version`, and disabling or re-roling a user bumps that version.
 - **Two admins demoting each other.** Checking "is there another admin?" without a lock lets two concurrent demotions leave nobody in charge. The check locks all active admin rows first.
 
-### 7. What "naive" looks like, measured
+### 8. What "naive" looks like, measured
 The classic generated transfer is: read the balance, check it, update it, all without a lock. To show why that is unacceptable here, the agent removed `FOR UPDATE` and re-ran the concurrency suite. It did the same later for the two safeguards in the auth code:
 
 | Mutation | Outcome |
@@ -104,8 +115,9 @@ The classic generated transfer is: read the balance, check it, update it, all wi
 | No lock ordering | PostgreSQL `40P01 deadlock detected` under opposing transfers |
 | No per-request user check on tokens | Disabled and demoted users kept access, and a token claiming a role its user doesn't have was accepted; 4 tests failed |
 | No row lock on refresh-token rotation | **10 of 10** concurrent refreshes of one token succeeded, so a stolen refresh token could be cloned |
+| `customerId` parsed with dashless-only `Guid.TryParseExact(…, "N", …)` again | The new dashed-format regression test failed immediately |
 
-Everything was restored, and the full suite passes again (148 tests at the time; 151 now).
+Everything was restored, and the full suite passes again (148 tests at the time; 153 now).
 
 ## What I took away
 - AI was fastest at boilerplate (EF mappings, Problem Details plumbing, Swagger, Dockerfile, CI) and at producing a broad first test list.

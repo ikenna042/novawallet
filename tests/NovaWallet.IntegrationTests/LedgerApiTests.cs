@@ -81,6 +81,32 @@ public sealed class LedgerApiTests(LedgerApiFixture fixture)
     }
 
     [Fact]
+    public async Task CustomerId_is_accepted_in_any_guid_format_not_just_dashless()
+    {
+        // A customer who copies their own userId from GET /me (dashed, the format every Guid
+        // field in this API renders as) must still be recognised as themselves.
+        var customer = await LedgerClient.CustomerAsync(fixture.Factory);
+        var ownDashed = await customer.Http.PostAsJsonAsync("/api/v1/wallets", new { customerId = customer.UserId.ToString() });
+        await ownDashed.EnsureStatusAsync(HttpStatusCode.Created);
+        Assert.Equal(customer.Subject, (await ownDashed.Content.ReadFromJsonAsync<WalletResponse>())!.CustomerId);
+
+        // An admin who copies a userId from GET /admin/users (also dashed) must be able to use it too.
+        var other = await LedgerClient.CustomerAsync(fixture.Factory);
+        var forOther = await Admin.Http.PostAsJsonAsync("/api/v1/wallets", new { customerId = other.UserId.ToString() });
+        await forOther.EnsureStatusAsync(HttpStatusCode.Created);
+        Assert.Equal(other.Subject, (await forOther.Content.ReadFromJsonAsync<WalletResponse>())!.CustomerId);
+    }
+
+    [Fact]
+    public async Task Malformed_customerId_is_rejected_with_a_clear_message()
+    {
+        var customer = await LedgerClient.CustomerAsync(fixture.Factory);
+        var response = await customer.Http.PostAsJsonAsync("/api/v1/wallets", new { customerId = "not-a-guid" });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("valid user id", (await response.ReadProblemAsync()).Detail);
+    }
+
+    [Fact]
     public async Task Customer_cannot_see_another_customers_wallet()
     {
         var (_, aliceWallet) = await NewCustomerAsync(1_000_00);

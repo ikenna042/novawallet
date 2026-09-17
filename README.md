@@ -92,7 +92,7 @@ dotnet test
 | Suite | Count | What it covers |
 |---|---|---|
 | `NovaWallet.UnitTests` | 75 | `Money` arithmetic and overflow, WAT day boundaries, daily-limit edge cases, audit hash chain, request validation, transfer orchestration against an in-memory store (lock order, replay, rejection caching), password and email rules, lockout, token rotation and reuse detection, wallet freeze, admin rules |
-| `NovaWallet.IntegrationTests` | 76 | The full HTTP pipeline against **real PostgreSQL**: concurrency under load, idempotency, sign-up / sign-in / refresh / logout (including concurrent refresh), instant revocation on disable and role change, admin user management, wallet freeze, admin action log, validation, Problem Details, pagination, append-only triggers, CHECK constraints, outbox, rate limiting, health, OpenAPI |
+| `NovaWallet.IntegrationTests` | 78 | The full HTTP pipeline against **real PostgreSQL**: concurrency under load, idempotency, sign-up / sign-in / refresh / logout (including concurrent refresh), instant revocation on disable and role change, admin user management, wallet freeze, admin action log, validation, Problem Details, pagination, append-only triggers, CHECK constraints, outbox, rate limiting, health, OpenAPI |
 
 Integration tests start PostgreSQL with **Testcontainers**, so Docker is required; CI runs them this way.
 Without Docker, point them at any server and they create and drop a throwaway database:
@@ -343,7 +343,7 @@ src/
   NovaWallet.Api/             Controllers (wallets, transfers, auth, admin), JWT issuing/validation, Problem Details, rate limiting, correlation id
 tests/
   NovaWallet.UnitTests/         75 tests
-  NovaWallet.IntegrationTests/  76 tests (PostgreSQL via Testcontainers or NOVAWALLET_TEST_DB)
+  NovaWallet.IntegrationTests/  78 tests (PostgreSQL via Testcontainers or NOVAWALLET_TEST_DB)
 scripts/smoke-test.sh         end-to-end check used by CI against `docker compose up`
 .github/workflows/ci.yml      build + all tests; compose smoke test
 docs/                         testing guide, presentation deck

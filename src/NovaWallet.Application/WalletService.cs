@@ -17,15 +17,24 @@ public sealed class WalletService(
 
     public async Task<WalletResponse> CreateAsync(Actor actor, CreateWalletCommand command, CancellationToken ct)
     {
-        var customerId = RequestGuard.CustomerId(command.CustomerId ?? actor.SubjectId);
-        if (!actor.IsAdmin && customerId != actor.SubjectId)
+        // customerId (when supplied) is a user id and is accepted in any valid GUID format
+        // (with or without dashes — every GUID the API shows elsewhere, e.g. /me, uses dashes).
+        // Comparing and looking it up by value, not by raw string, means the caller's own id
+        // is recognised regardless of which format they copied it in.
+        Guid userId;
+        if (command.CustomerId is null)
+            userId = actor.UserId;
+        else if (!Guid.TryParse(command.CustomerId, out userId))
+            throw new RequestValidationException("customerId must be a valid user id.");
+
+        if (!actor.IsAdmin && userId != actor.UserId)
             throw new ForbiddenException("Customers can only create a wallet for themselves.");
 
         // Wallets belong to registered users; the customer id is the user's id.
-        if (!Guid.TryParseExact(customerId, "N", out var userId) || await users.FindByIdAsync(userId, ct) is null)
-            throw new RequestValidationException("customerId must be the id of a registered user.");
+        var user = await users.FindByIdAsync(userId, ct)
+                   ?? throw new RequestValidationException("customerId must be the id of a registered user.");
 
-        var wallet = new Wallet(Guid.NewGuid(), customerId, timeProvider.GetLedgerNow());
+        var wallet = new Wallet(Guid.NewGuid(), user.SubjectId, timeProvider.GetLedgerNow());
         if (!await store.TryCreateWalletAsync(wallet, ct))
             throw new WalletAlreadyExistsException();
 

@@ -6,7 +6,7 @@ Three ways to test, from quickest to deepest:
 |---|---|---|
 | **A. Smoke script** (`./scripts/smoke-test.sh`) | 5 s | The main flow works end to end, including sign-in and admin actions (31 checks) |
 | **B. By hand**, in Swagger or with curl (sections 2–5) | 15–20 min | Each requirement, one at a time, in front of an audience |
-| **C. Automated suite** (`dotnet test`, section 6) | ~20 s | Everything (151 tests), including 200-request concurrency |
+| **C. Automated suite** (`dotnet test`, section 6) | ~20 s | Everything (153 tests), including 200-request concurrency |
 
 ---
 
@@ -196,9 +196,10 @@ Expected: **201**, with `"balanceKobo":0`, `"currency":"NGN"` and `"status":"Act
 | Also try | Expected |
 |---|---|
 | Create a second wallet as Carol | **409** `wallet_already_exists` (one wallet per customer) |
-| As Carol, body `{"customerId":"<someone else's userId without dashes>"}` | **403** `forbidden` |
-| As admin, `{"customerId":"<a registered user's id without dashes>"}` for a user with no wallet | **201** |
+| As Carol, body `{"customerId":"<someone else's userId>"}` (dashed or not — both accepted) | **403** `forbidden` |
+| As admin, `{"customerId":"<a registered user's id>"}` for a user with no wallet | **201** |
 | As admin, a `customerId` that isn't a registered user | **400** |
+| A `customerId` that isn't a valid GUID at all | **400** `validation_error` |
 
 ### R2. Get balance: *"current balance and currency (NGN), amounts in kobo"*
 
@@ -448,7 +449,7 @@ Expected: with the database stopped, readiness returns **503 Unhealthy** while l
 You need the .NET 8 SDK. With Docker running (OrbStack), the integration tests start their own PostgreSQL:
 
 ```bash
-dotnet test                                                     # everything: 151 tests
+dotnet test                                                     # everything: 153 tests
 dotnet test tests/NovaWallet.UnitTests                          # 75 unit tests, no database needed
 dotnet test --filter "FullyQualifiedName~ConcurrencyTests" \
   --logger "console;verbosity=detailed"                         # prints the timings

@@ -138,7 +138,7 @@ async function icon(Comp, color, size = 256) {
     header(s, "Outcome", "What was delivered — and verified");
     const stats = [
       ["200 → 10", "parallel ₦100 transfers from a ₦1,000 wallet: exactly 10 succeed, 190 refused"],
-      ["151", "automated tests: 75 unit + 76 against real PostgreSQL, all green"],
+      ["153", "automated tests: 75 unit + 78 against real PostgreSQL, all green"],
       ["0", "negative balances or deadlocks across repeated load runs"],
       ["1", "command to run it: docker compose up (a CI job runs exactly that)"],
     ];
@@ -153,7 +153,7 @@ async function icon(Comp, color, size = 256) {
       { text: "password sign-in with rotating refresh tokens · admin API (users, freezes, action log) · Swagger/OpenAPI · rate limiting · transactional outbox · Serilog correlation IDs · health probes · hash-chained audit trail · CI with a compose smoke test · README, testing guide, AI_USAGE.md" },
     ], { x: 0.5, y: 4.1, w: 9, h: 0.8, fontSize: 12.5, color: C.ink });
     footer(s, 3);
-    s.addNotes("The headline: 200 transfers fired at the same instant against a thousand-naira wallet — exactly ten succeed, every time, balance lands on zero, and the ledger agrees. 151 tests in total, about half of them against real Postgres. All four stretch goals are in, plus real sign-in and an admin flow.");
+    s.addNotes("The headline: 200 transfers fired at the same instant against a thousand-naira wallet — exactly ten succeed, every time, balance lands on zero, and the ledger agrees. 153 tests in total, about half of them against real Postgres. All four stretch goals are in, plus real sign-in and an admin flow.");
   }
 
   // ---------- 4. Architecture ----------

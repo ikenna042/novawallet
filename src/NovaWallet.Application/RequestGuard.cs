@@ -36,13 +36,6 @@ public sealed partial class RequestGuard(IOptions<LedgerOptions> options)
         return reference;
     }
 
-    public static string CustomerId(string? customerId)
-    {
-        if (string.IsNullOrEmpty(customerId) || !CustomerIdPattern().IsMatch(customerId))
-            throw new RequestValidationException("customerId must be 1-64 characters of letters, digits, '-' or '_'.");
-        return customerId;
-    }
-
     public static string? Narration(string? narration)
     {
         if (narration is null)
@@ -68,7 +61,4 @@ public sealed partial class RequestGuard(IOptions<LedgerOptions> options)
 
     [GeneratedRegex("^[A-Za-z0-9_-]{8,64}$")]
     private static partial Regex SafeToken();
-
-    [GeneratedRegex("^[A-Za-z0-9_-]{1,64}$")]
-    private static partial Regex CustomerIdPattern();
 }
