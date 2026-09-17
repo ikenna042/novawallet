@@ -144,6 +144,17 @@ public sealed class LedgerStore(LedgerDbContext db) : ILedgerStore
     public async Task<IReadOnlyList<AuditRecord>> GetAuditTrailAsync(Guid walletId, CancellationToken ct) =>
         await db.AuditLog.AsNoTracking().Where(a => a.WalletId == walletId).OrderBy(a => a.Id).ToListAsync(ct);
 
+    public async Task<IReadOnlyList<Wallet>> ListWalletsAsync(
+        WalletStatus? status, Guid? afterId, int take, CancellationToken ct)
+    {
+        var query = db.Wallets.AsNoTracking();
+        if (status is { } s)
+            query = query.Where(w => w.Status == s);
+        if (afterId is { } after)
+            query = query.Where(w => w.Id.CompareTo(after) > 0);
+        return await query.OrderBy(w => w.Id).Take(take).ToListAsync(ct);
+    }
+
     private static NpgsqlParameter Param(string name, object? value, NpgsqlDbType type) =>
         new(name, type) { Value = value ?? DBNull.Value };
 

@@ -133,6 +133,12 @@ internal sealed class FakeLedgerStore : ILedgerStore
     public Task<IReadOnlyList<AuditRecord>> GetAuditTrailAsync(Guid walletId, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<AuditRecord>>(Audit.Where(a => a.WalletId == walletId).ToList());
 
+    public Task<IReadOnlyList<Wallet>> ListWalletsAsync(WalletStatus? status, Guid? afterId, int take, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<Wallet>>(Wallets.Values
+            .Where(w => status == null || w.Status == status)
+            .Where(w => afterId == null || w.Id.CompareTo(afterId.Value) > 0)
+            .OrderBy(w => w.Id).Take(take).ToList());
+
     private void RestoreBalances()
     {
         foreach (var (id, balance) in _balancesAtBegin)

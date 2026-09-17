@@ -61,6 +61,13 @@ public sealed class AdminController(AdminService admin) : ControllerBase
     public Task<UserProfile> ChangeRole(Guid userId, [FromBody] RoleRequest request, CancellationToken ct) =>
         admin.ChangeRoleAsync(User.ToActor(), userId, request.Role, HttpContext.GetCorrelationId(), ct);
 
+    /// <summary>List every wallet, ordered by id. <c>status</c> (active|frozen) filters; pass <c>nextCursor</c> as <c>cursor</c>.</summary>
+    [HttpGet("wallets")]
+    [ProducesResponseType<WalletPage>(StatusCodes.Status200OK)]
+    public Task<WalletPage> ListWallets(
+        [FromQuery] string? status, [FromQuery] int? limit, [FromQuery] string? cursor, CancellationToken ct) =>
+        admin.ListWalletsAsync(User.ToActor(), status, limit, cursor, ct);
+
     /// <summary>Put a debit hold on a wallet: outbound transfers are refused with 422 wallet_frozen; credits still land.</summary>
     [HttpPost("wallets/{walletId:guid}/freeze")]
     [ProducesResponseType<WalletResponse>(StatusCodes.Status200OK)]

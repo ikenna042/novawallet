@@ -103,6 +103,8 @@ expect "admin finds Alice and her wallet" \
   "$(get "/api/v1/admin/users?email=$ALICE_EMAIL" "$ADMIN" | jq -r '.items[0].walletId')" "$A"
 
 post "/api/v1/admin/wallets/$A/freeze" '{"reason":"Smoke test hold"}' "$ADMIN" > /dev/null
+expect "admin's wallet list shows Alice's wallet as frozen" \
+  "$(get '/api/v1/admin/wallets?status=frozen&limit=100' "$ADMIN" | jq --arg a "$A" -r '.items[] | select(.walletId == $a) | .status')" "Frozen"
 expect "frozen wallet cannot send (wallet_frozen)" \
   "$(post /api/v1/transfers "$(transfer_body "$B" 100)" "$ALICE" -H "Idempotency-Key: $(uuid)" | jq -r .code)" "wallet_frozen"
 expect "frozen wallet can still receive" \

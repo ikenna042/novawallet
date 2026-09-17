@@ -92,7 +92,7 @@ dotnet test
 | Suite | Count | What it covers |
 |---|---|---|
 | `NovaWallet.UnitTests` | 75 | `Money` arithmetic and overflow, WAT day boundaries, daily-limit edge cases, audit hash chain, request validation, transfer orchestration against an in-memory store (lock order, replay, rejection caching), password and email rules, lockout, token rotation and reuse detection, wallet freeze, admin rules |
-| `NovaWallet.IntegrationTests` | 78 | The full HTTP pipeline against **real PostgreSQL**: concurrency under load, idempotency, sign-up / sign-in / refresh / logout (including concurrent refresh), instant revocation on disable and role change, admin user management, wallet freeze, admin action log, validation, Problem Details, pagination, append-only triggers, CHECK constraints, outbox, rate limiting, health, OpenAPI |
+| `NovaWallet.IntegrationTests` | 81 | The full HTTP pipeline against **real PostgreSQL**: concurrency under load, idempotency, sign-up / sign-in / refresh / logout (including concurrent refresh), instant revocation on disable and role change, admin user management, wallet freeze, admin action log, validation, Problem Details, pagination, append-only triggers, CHECK constraints, outbox, rate limiting, health, OpenAPI |
 
 Integration tests start PostgreSQL with **Testcontainers**, so Docker is required; CI runs them this way.
 Without Docker, point them at any server and they create and drop a throwaway database:
@@ -163,6 +163,7 @@ Sign-up, sign-in and refresh are rate-limited per client IP.
 | POST | `/api/v1/admin/users/{userId}/disable` `{reason}` | Blocks sign-in and kills existing tokens and sessions **immediately** |
 | POST | `/api/v1/admin/users/{userId}/enable` | Re-enables the account |
 | POST | `/api/v1/admin/users/{userId}/role` `{role}` | `admin` or `customer`. Old tokens stop working; the user signs in again |
+| GET | `/api/v1/admin/wallets?status=&limit=&cursor=` | Browse every wallet, optionally filtered to `active` or `frozen` |
 | POST | `/api/v1/admin/wallets/{walletId}/freeze` `{reason}` | Debit hold: outbound transfers get 422 `wallet_frozen`; credits still land |
 | POST | `/api/v1/admin/wallets/{walletId}/unfreeze` | Lifts the hold |
 | GET | `/api/v1/admin/actions?limit=&cursor=` | The admin action log, newest first |
@@ -343,7 +344,7 @@ src/
   NovaWallet.Api/             Controllers (wallets, transfers, auth, admin), JWT issuing/validation, Problem Details, rate limiting, correlation id
 tests/
   NovaWallet.UnitTests/         75 tests
-  NovaWallet.IntegrationTests/  78 tests (PostgreSQL via Testcontainers or NOVAWALLET_TEST_DB)
+  NovaWallet.IntegrationTests/  81 tests (PostgreSQL via Testcontainers or NOVAWALLET_TEST_DB)
 scripts/smoke-test.sh         end-to-end check used by CI against `docker compose up`
 .github/workflows/ci.yml      build + all tests; compose smoke test
 docs/                         testing guide, presentation deck

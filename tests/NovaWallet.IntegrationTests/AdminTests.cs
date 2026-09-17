@@ -26,6 +26,7 @@ public sealed class AdminTests(LedgerApiFixture fixture)
     [Theory]
     [InlineData("GET", "/api/v1/admin/users")]
     [InlineData("GET", "/api/v1/admin/actions")]
+    [InlineData("GET", "/api/v1/admin/wallets")]
     [InlineData("POST", "/api/v1/admin/users/{self}/role")]
     [InlineData("POST", "/api/v1/admin/wallets/{wallet}/freeze")]
     public async Task Customers_and_anonymous_callers_cannot_use_admin_endpoints(string method, string path)
@@ -176,6 +177,56 @@ public sealed class AdminTests(LedgerApiFixture fixture)
         var (_, wallet) = await FundedCustomerAsync(0);
         Assert.Equal(HttpStatusCode.BadRequest, (await Post(Admin, $"/api/v1/admin/wallets/{wallet}/freeze", new { reason = " " })).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await Post(Admin, $"/api/v1/admin/wallets/{Guid.NewGuid()}/freeze", new { reason = "x" })).StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_can_list_all_wallets_and_filter_by_status()
+    {
+        var frozenIds = new List<Guid>();
+        for (var i = 0; i < 3; i++)
+        {
+            var (_, wallet) = await FundedCustomerAsync(0);
+            await (await Post(Admin, $"/api/v1/admin/wallets/{wallet}/freeze", new { reason = "review" })).EnsureStatusAsync(HttpStatusCode.OK);
+            frozenIds.Add(wallet);
+        }
+        var (_, activeWallet) = await FundedCustomerAsync(0);
+
+        // One page is enough to find our wallets among whatever else the suite has created so far;
+        // every item that comes back for status=frozen really must be frozen.
+        var page = (await Admin.Http.GetFromJsonAsync<WalletPage>("/api/v1/admin/wallets?status=frozen&limit=100"))!;
+        Assert.All(page.Items, w => Assert.Equal("Frozen", w.Status));
+        Assert.Subset(page.Items.Select(w => w.WalletId).ToHashSet(), frozenIds.ToHashSet());
+        var found = page.Items.Where(w => frozenIds.Contains(w.WalletId)).ToList();
+        Assert.Equal(3, found.Count);
+        Assert.DoesNotContain(activeWallet, page.Items.Select(w => w.WalletId));
+
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await Admin.Http.GetAsync("/api/v1/admin/wallets?status=frostbitten")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Wallet_list_pages_by_id_without_gaps_or_duplicates()
+    {
+        // Guarantees at least two wallets exist; where exactly they sort among every other wallet the
+        // suite has created isn't relevant — this test checks the paging mechanism, not specific wallets.
+        await FundedCustomerAsync(0);
+        await FundedCustomerAsync(0);
+
+        var first = (await Admin.Http.GetFromJsonAsync<WalletPage>("/api/v1/admin/wallets?limit=2"))!;
+        Assert.Equal(2, first.Items.Count);
+        Assert.NotNull(first.NextCursor);
+        Assert.Equal(first.NextCursor, first.Items[^1].WalletId.ToString());
+
+        var second = (await Admin.Http.GetFromJsonAsync<WalletPage>(
+            $"/api/v1/admin/wallets?limit=2&cursor={first.NextCursor}"))!;
+        Assert.Equal(2, second.Items.Count);
+
+        // Keyset property: strictly ascending within and across pages, no repeats.
+        var ids = first.Items.Concat(second.Items).Select(w => w.WalletId).ToList();
+        Assert.Equal(ids.Distinct().Count(), ids.Count);
+        Assert.Equal(ids.Order(), ids);
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await Admin.Http.GetAsync("/api/v1/admin/wallets?cursor=not-a-guid")).StatusCode);
     }
 
     [Fact]

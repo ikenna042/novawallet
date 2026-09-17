@@ -6,7 +6,7 @@ Three ways to test, from quickest to deepest:
 |---|---|---|
 | **A. Smoke script** (`./scripts/smoke-test.sh`) | 5 s | The main flow works end to end, including sign-in and admin actions (31 checks) |
 | **B. By hand**, in Swagger or with curl (sections 2–5) | 15–20 min | Each requirement, one at a time, in front of an audience |
-| **C. Automated suite** (`dotnet test`, section 6) | ~20 s | Everything (153 tests), including 200-request concurrency |
+| **C. Automated suite** (`dotnet test`, section 6) | ~20 s | Everything (156 tests), including 200-request concurrency |
 
 ---
 
@@ -177,6 +177,18 @@ curl -s "$BASE/api/v1/admin/actions?limit=6" -H "Authorization: Bearer $ADMIN" |
 docker compose exec db psql -U novawallet -d novawallet -c "UPDATE admin_actions SET detail = 'nothing to see';"
 # ERROR:  admin_actions is append-only: UPDATE is not allowed
 ```
+
+### AD6. Browse every wallet
+
+There's no free-text search here (use AD1's `GET /admin/users?email=` to find one customer's wallet); this is for browsing/auditing the whole table, e.g. reviewing every wallet currently on hold.
+
+```bash
+curl -s "$BASE/api/v1/admin/wallets?limit=3" -H "Authorization: Bearer $ADMIN" | jq
+curl -s "$BASE/api/v1/admin/wallets?status=frozen&limit=100" -H "Authorization: Bearer $ADMIN" | jq '.items[] | {walletId, customerId, status}'
+curl -s -o /dev/null -w '%{http_code}\n' "$BASE/api/v1/admin/wallets?status=nonsense" -H "Authorization: Bearer $ADMIN"   # 400
+```
+
+Expected: `items` ordered by `walletId` ascending (this is a stable keyset order, not creation order — `walletId`s are random GUIDs), `nextCursor` set when there's another page, `null` on the last one. `status` accepts `active` or `frozen` (case-insensitive); anything else is `400 validation_error`.
 
 ---
 
@@ -449,7 +461,7 @@ Expected: with the database stopped, readiness returns **503 Unhealthy** while l
 You need the .NET 8 SDK. With Docker running (OrbStack), the integration tests start their own PostgreSQL:
 
 ```bash
-dotnet test                                                     # everything: 153 tests
+dotnet test                                                     # everything: 156 tests
 dotnet test tests/NovaWallet.UnitTests                          # 75 unit tests, no database needed
 dotnet test --filter "FullyQualifiedName~ConcurrencyTests" \
   --logger "console;verbosity=detailed"                         # prints the timings
@@ -474,7 +486,7 @@ If `dotnet` isn't on your PATH (it was installed user-locally), use `~/.dotnet/d
 | JWT | `Requests_without_a_valid_token_are_rejected_with_problem_details` (no token, wrong key, garbage, `alg:none`), `Expired_tokens_are_rejected`, `Correctly_signed_token_for_a_user_that_does_not_exist_is_rejected`, `Token_claiming_a_role_the_user_does_not_have_is_rejected` |
 | AU Sign-up / sign-in | `Register_login_and_me_round_trip_as_a_customer`, `Public_registration_cannot_create_an_admin`, `Duplicate_email_is_a_conflict_regardless_of_case`, `Weak_passwords_are_rejected`, `Wrong_password_and_unknown_email_are_indistinguishable`, `Account_locks_after_five_failed_logins`, unit `CredentialsTests`, `AuthServiceTests` |
 | AU Sessions | `Refresh_rotates_tokens_and_reusing_an_old_token_revokes_the_session`, **`Concurrent_refreshes_with_the_same_token_have_exactly_one_winner`**, `Logout_ends_the_session`, unit `Expired_refresh_token_is_rejected`, `Separate_logins_are_separate_sessions` |
-| AD Admin | `Customers_and_anonymous_callers_cannot_use_admin_endpoints`, `User_list_is_paginated_by_email`, `Disabling_a_user_cuts_off_access_immediately_and_enabling_restores_it`, `Promotion_invalidates_old_tokens_and_takes_effect_on_next_sign_in`, `Admin_cannot_disable_themselves`, `Admin_requests_are_validated`, `Frozen_wallet_cannot_send_but_can_receive_until_unfrozen`, `Freeze_requires_a_reason_and_an_existing_wallet`, `Admin_actions_are_logged_and_the_log_is_append_only`, `Admin_seeding_is_idempotent_across_restarts`, unit `The_last_active_admin_cannot_be_disabled_or_demoted` |
+| AD Admin | `Customers_and_anonymous_callers_cannot_use_admin_endpoints`, `User_list_is_paginated_by_email`, `Disabling_a_user_cuts_off_access_immediately_and_enabling_restores_it`, `Promotion_invalidates_old_tokens_and_takes_effect_on_next_sign_in`, `Admin_cannot_disable_themselves`, `Admin_requests_are_validated`, `Frozen_wallet_cannot_send_but_can_receive_until_unfrozen`, `Freeze_requires_a_reason_and_an_existing_wallet`, `Admin_can_list_all_wallets_and_filter_by_status`, `Wallet_list_pages_by_id_without_gaps_or_duplicates`, `Admin_actions_are_logged_and_the_log_is_append_only`, `Admin_seeding_is_idempotent_across_restarts`, unit `The_last_active_admin_cannot_be_disabled_or_demoted` |
 | Problem Details | Every rejection test calls `ReadProblemAsync`, which asserts `application/problem+json` and reads `code` |
 | docker compose | GitHub Actions job **compose-smoke** |
 | S1 Rate limiting | `Transfer_endpoint_is_rate_limited_per_customer`, `Sign_in_endpoints_are_rate_limited_per_client` |

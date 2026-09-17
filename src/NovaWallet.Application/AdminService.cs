@@ -94,6 +94,37 @@ public sealed class AdminService(
         });
     }
 
+    /// <summary>Every wallet, newest-id-last, optionally filtered by status (e.g. to review all frozen wallets).</summary>
+    public async Task<WalletPage> ListWalletsAsync(Actor actor, string? status, int? limit, string? cursor, CancellationToken ct)
+    {
+        EnsureAdmin(actor);
+        var take = PageSize(limit);
+
+        WalletStatus? filter = null;
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            filter = status.Trim().ToLowerInvariant() switch
+            {
+                "active" => WalletStatus.Active,
+                "frozen" => WalletStatus.Frozen,
+                _ => throw new RequestValidationException("status must be 'active' or 'frozen'."),
+            };
+        }
+
+        Guid? afterId = null;
+        if (cursor is not null)
+        {
+            if (!Guid.TryParse(cursor, out var parsed))
+                throw new RequestValidationException("cursor is invalid.");
+            afterId = parsed;
+        }
+
+        var found = await ledger.ListWalletsAsync(filter, afterId, take + 1, ct);
+        var items = found.Take(take).Select(w => new WalletResponse(
+            w.Id, w.CustomerId, w.BalanceKobo, w.Currency, w.Status.ToString(), w.FrozenReason, w.CreatedAt)).ToList();
+        return new WalletPage(items, found.Count > take ? items[^1].WalletId.ToString() : null);
+    }
+
     /// <summary>Puts a debit hold on a wallet (e.g. fraud or dispute). Credits still land.</summary>
     public Task<WalletResponse> FreezeWalletAsync(
         Actor actor, Guid walletId, string? reason, string? correlationId, CancellationToken ct)

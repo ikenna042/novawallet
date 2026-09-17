@@ -63,6 +63,9 @@ public interface ILedgerStore
 
     /// <summary>Oldest first.</summary>
     Task<IReadOnlyList<AuditRecord>> GetAuditTrailAsync(Guid walletId, CancellationToken ct);
+
+    /// <summary>Every wallet, optionally filtered by status, ordered by id for stable keyset pagination.</summary>
+    Task<IReadOnlyList<Wallet>> ListWalletsAsync(WalletStatus? status, Guid? afterId, int take, CancellationToken ct);
 }
 
 public interface ILedgerTransactionScope : IAsyncDisposable

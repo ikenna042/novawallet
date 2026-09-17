@@ -138,7 +138,7 @@ async function icon(Comp, color, size = 256) {
     header(s, "Outcome", "What was delivered — and verified");
     const stats = [
       ["200 → 10", "parallel ₦100 transfers from a ₦1,000 wallet: exactly 10 succeed, 190 refused"],
-      ["153", "automated tests: 75 unit + 78 against real PostgreSQL, all green"],
+      ["156", "automated tests: 75 unit + 81 against real PostgreSQL, all green"],
       ["0", "negative balances or deadlocks across repeated load runs"],
       ["1", "command to run it: docker compose up (a CI job runs exactly that)"],
     ];
@@ -153,7 +153,7 @@ async function icon(Comp, color, size = 256) {
       { text: "password sign-in with rotating refresh tokens · admin API (users, freezes, action log) · Swagger/OpenAPI · rate limiting · transactional outbox · Serilog correlation IDs · health probes · hash-chained audit trail · CI with a compose smoke test · README, testing guide, AI_USAGE.md" },
     ], { x: 0.5, y: 4.1, w: 9, h: 0.8, fontSize: 12.5, color: C.ink });
     footer(s, 3);
-    s.addNotes("The headline: 200 transfers fired at the same instant against a thousand-naira wallet — exactly ten succeed, every time, balance lands on zero, and the ledger agrees. 153 tests in total, about half of them against real Postgres. All four stretch goals are in, plus real sign-in and an admin flow.");
+    s.addNotes("The headline: 200 transfers fired at the same instant against a thousand-naira wallet — exactly ten succeed, every time, balance lands on zero, and the ledger agrees. 156 tests in total, about half of them against real Postgres. All four stretch goals are in, plus real sign-in and an admin flow.");
   }
 
   // ---------- 4. Architecture ----------
@@ -325,7 +325,7 @@ async function icon(Comp, color, size = 256) {
     const powers = [
       [I.naira, "Credit & audit", "simulated NIP credits; hash-chained audit trail"],
       [I.user, "Manage users", "disable → tokens die on the next request; promote / demote"],
-      [I.eye, "View any wallet", "find a user, see balance and statement"],
+      [I.eye, "View & browse wallets", "look up any wallet; filter the full list by status"],
       [I.lock, "Freeze wallet", "debit hold: sends refused, credits still land"],
     ];
     powers.forEach(([img, t, d], i) => {

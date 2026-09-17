@@ -108,6 +108,8 @@ public sealed record AuthTokens(
 
 public sealed record UserPage(IReadOnlyList<UserProfile> Items, string? NextCursor);
 
+public sealed record WalletPage(IReadOnlyList<WalletResponse> Items, string? NextCursor);
+
 public sealed record AdminActionItem(
     long Id, string ActorId, string Action, string TargetType, string TargetId, string? Detail,
     string? CorrelationId, DateTimeOffset OccurredAt);
